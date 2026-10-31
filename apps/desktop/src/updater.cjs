@@ -39,7 +39,7 @@ function isPerMachineInstall() {
   const exe = app.getPath('exe').toLowerCase();
   return [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.ProgramW6432]
     .filter(Boolean)
-    .some((dir) => exe.startsWith(dir.toLowerCase() + path.sep));
+    .some((dir) => exe.startsWith(dir.toLowerCase().replace(/[\\/]+$/, '') + path.win32.sep));
 }
 
 /** PowerShell command that runs the NSIS installer silently for all users, elevated, then relaunches GlowPilot. */
