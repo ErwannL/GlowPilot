@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { elkDriver, hexToRgb, rgbToHex, CALIBRATION_SWATCHES } from '@glowpilot/core';
-import { store, useStore } from '../store';
-import { Badge, Button, Card, Field, inputCls, PageHeader, StatusPill } from '../components/ui';
+import { elkDriver, newId, rgbToHex, CALIBRATION_SWATCHES } from '@glowpilot/core';
+import { store, useStore, type LightGroup, type LightView } from '../store';
+import { Badge, Button, Card, Field, inputCls, Modal, PageHeader, StatusPill } from '../components/ui';
 
 /** Guided hardware test: each step sends one frame and asks the user what they see. */
 const TEST_STEPS: { label: string; expect: string; run: () => void }[] = [
@@ -16,15 +16,16 @@ const TEST_STEPS: { label: string; expect: string; run: () => void }[] = [
 ];
 
 type Result = 'pass' | 'fail' | 'skip';
+const GROUP_ICONS = ['🛋️', '🛏️', '🖥️', '🍳', '🎮', '📺', '🌙', '✨'];
 
 export function Devices() {
   const s = useStore((x) => x);
-  const [alias, setAlias] = useState(s.device?.alias ?? '');
   const [step, setStep] = useState(-1);
   const [results, setResults] = useState<Result[]>([]);
   const [raw, setRaw] = useState('7e 07 05 03 ff 00 00 10 ef');
-  const connected = s.status === 'connected';
+  const [editGroup, setEditGroup] = useState<LightGroup | null>(null);
   const remote = s.mode === 'remote';
+  const anyConnected = s.lights.some((l) => l.status === 'connected');
 
   const startTest = () => { setResults([]); setStep(0); TEST_STEPS[0].run(); };
   const answer = (r: Result) => {
@@ -44,50 +45,47 @@ export function Devices() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Devices" subtitle="Find, name and test your LED controller." />
+      <PageHeader title="Devices" subtitle="Your controllers, and the groups you control together."
+        action={!remote && <div className="flex gap-2">
+          {s.mode === 'simulator' && <Button onClick={() => store.addSimulatedLight()}>+ Simulated light</Button>}
+          {s.mode === 'local' && <Button variant="primary" onClick={() => store.addLight()}>+ Add a light</Button>}
+        </div>} />
 
-      <Card title="Controller" action={<StatusPill status={s.status} />}>
-        {s.device ? (
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="grid h-12 w-12 place-items-center rounded-2xl brand-gradient text-xl">⌁</div>
-              <div>
-                <div className="font-semibold">{s.device.alias || s.device.name}</div>
-                <div className="text-xs text-white/45">{s.device.name} · {s.device.id}</div>
-              </div>
-              <div className="ml-auto flex gap-2">
-                <Badge tone="purple">{elkDriver.label}</Badge>
-                <Badge tone={s.mode === 'simulator' ? 'orange' : 'green'}>{s.mode === 'simulator' ? 'Simulated' : s.transportKind}</Badge>
-              </div>
+      {s.error && <div className="rounded-2xl bg-red-500/10 px-4 py-3 text-sm text-red-200">{s.error}</div>}
+
+      {s.lights.length === 0 ? (
+        <Card>
+          <p className="text-sm text-white/60">No controller yet. GlowPilot never connects to a nearby controller on its own: you pick it from the list.</p>
+          {s.mode === 'local' && <Button className="mt-3" variant="primary" onClick={() => store.addLight()}>Scan for controllers</Button>}
+          {remote && <p className="mt-2 text-sm text-white/50">GlowPilot Desktop has no controller connected.</p>}
+        </Card>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2">
+          {s.lights.map((l) => <LightCard key={l.id} light={l} remote={remote} groups={s.groups.filter((g) => g.deviceIds.includes(l.id)).map((g) => g.name)} />)}
+        </div>
+      )}
+      <p className="text-xs text-white/40">Each controller accepts <b>one connection at a time</b>: close Lotus Lantern on your phone first. Controllers don't report their colour, so GlowPilot remembers what it last sent.</p>
+
+      {!remote && (
+        <Card title="Groups" action={<Button variant="soft" disabled={s.lights.length === 0} onClick={() => setEditGroup({ id: newId('grp'), name: 'Living room', icon: '🛋️', deviceIds: s.lights.map((l) => l.id) })}>+ New group</Button>}>
+          {s.groups.length === 0 ? (
+            <p className="text-sm text-white/50">Groups let you put some lights on one theme and others on another, e.g. "Desk" on Gaming while "Bed" stays on Relax. Pick the group at the top of Home, Color, Effects or Scenes; automations and schedules can target a group too.</p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {s.groups.map((g) => (
+                <div key={g.id} className="flex items-center gap-3 rounded-2xl bg-white/5 p-3">
+                  <span className="text-2xl">{g.icon}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium">{g.name}</div>
+                    <div className="truncate text-xs text-white/45">{g.deviceIds.map((id) => s.lights.find((l) => l.id === id)).filter(Boolean).map((l) => l!.device.alias || l!.device.name).join(', ') || 'No lights'}</div>
+                  </div>
+                  <Button onClick={() => setEditGroup(g)}>Edit</Button>
+                </div>
+              ))}
             </div>
-            {!remote && (
-              <>
-                <div className="flex flex-wrap items-end gap-2">
-                  <div className="min-w-[200px] flex-1"><Field label="Name"><input className={inputCls} value={alias} placeholder="Living room strip" onChange={(e) => setAlias(e.target.value)} /></Field></div>
-                  <Button onClick={() => store.renameDevice(alias)}>Save name</Button>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {connected ? <Button onClick={() => store.disconnect()}>Disconnect</Button> : <Button variant="primary" onClick={() => store.reconnect()}>Connect</Button>}
-                  <Button onClick={() => store.pickDevice()}>Choose another controller</Button>
-                  <Button variant="danger" onClick={() => store.forgetDevice()}>Forget</Button>
-                </div>
-                {s.lastAckAt > 0 && <p className="text-xs text-emerald-300/80">Controller acknowledged a command {Math.round((Date.now() - s.lastAckAt) / 1000)} s ago (FFF4 echo).</p>}
-              </>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <p className="text-sm text-white/60">No controller selected yet. GlowPilot never connects to a nearby controller on its own; you pick it from the list.</p>
-            {s.mode === 'local' && <Button variant="primary" onClick={() => store.pickDevice()}>Scan for controllers</Button>}
-            {s.mode === 'remote' && <p className="text-sm text-white/50">GlowPilot Desktop has no controller connected.</p>}
-          </div>
-        )}
-        {s.error && <p className="mt-3 text-sm text-red-300">{s.error}</p>}
-        <ul className="mt-5 space-y-1 text-xs text-white/40">
-          <li>• The controller accepts <b>one connection at a time</b>. Close Lotus Lantern on your phone first.</li>
-          <li>• The controller does not report its colour. GlowPilot remembers what it last sent.</li>
-        </ul>
-      </Card>
+          )}
+        </Card>
+      )}
 
       {remote && s.owner === 'desktop' && (
         <Card title="Connection ownership">
@@ -96,12 +94,12 @@ export function Devices() {
         </Card>
       )}
 
-      {!remote && (
+      {!remote && s.lights.length > 0 && (
         <Card title="Hardware test" action={<Badge tone="orange">Physical verification</Badge>}>
           {step < 0 && (
             <div className="space-y-3">
-              <p className="text-sm text-white/60">Sends each command once and asks what the strip actually does. This is how features become <b>physically tested</b> instead of only protocol-verified.</p>
-              <Button variant="primary" disabled={!connected} onClick={startTest}>Start test</Button>
+              <p className="text-sm text-white/60">Sends each command to the lights selected at the top (currently: <b>{s.device?.alias || s.device?.name}</b>{s.lights.length > 1 ? ' and the rest of the target' : ''}) and asks what they actually do.</p>
+              <Button variant="primary" disabled={!anyConnected} onClick={startTest}>Start test</Button>
             </div>
           )}
           {step >= 0 && step < TEST_STEPS.length && (
@@ -133,11 +131,11 @@ export function Devices() {
         </Card>
       )}
 
-      {!remote && (
+      {!remote && s.lights.length > 0 && (
         <Card title="Protocol console" action={<Badge>Advanced</Badge>}>
           <div className="flex flex-wrap gap-2">
             <input className={inputCls + ' flex-1 font-mono'} value={raw} onChange={(e) => setRaw(e.target.value)} />
-            <Button disabled={!connected} onClick={() => {
+            <Button disabled={!anyConnected} onClick={() => {
               const bytes = raw.replace(/[^0-9a-f]/gi, '').match(/.{2}/g)?.map((h) => parseInt(h, 16)) ?? [];
               if (bytes.length) store.sendRaw(Uint8Array.from(bytes));
             }}>Send frame</Button>
@@ -146,18 +144,87 @@ export function Devices() {
             {s.log.length === 0 && <div className="text-white/30">No traffic yet.</div>}
             {s.log.map((l, i) => (
               <div key={i} className={l.dir === 'tx' ? 'text-sky-300' : 'text-emerald-300'}>
-                {new Date(l.at).toLocaleTimeString()} {l.dir === 'tx' ? '→' : '←'} {l.hex}
+                {new Date(l.at).toLocaleTimeString()} {s.lights.length > 1 ? `[${l.light}] ` : ''}{l.dir === 'tx' ? '→' : '←'} {l.hex}
               </div>
             ))}
           </div>
-          {s.sim && (
-            <div className="mt-4 flex items-center gap-3 text-sm text-white/60">
-              Simulated strip:
-              <span className="h-6 w-24 rounded-full border border-white/20" style={{ background: s.sim.on ? rgbToHex(hexToRgb(rgbToHex({ r: s.sim.r, g: s.sim.g, b: s.sim.b }))!) : '#000', opacity: s.sim.on ? 0.3 + s.sim.brightness / 140 : 1 }} />
-              {s.sim.effect != null && <span>effect 0x{s.sim.effect.toString(16)}</span>}
-            </div>
-          )}
         </Card>
+      )}
+
+      {editGroup && (
+        <Modal open onClose={() => setEditGroup(null)} title="Group">
+          <div className="space-y-4">
+            <div className="grid grid-cols-[1fr_auto] gap-3">
+              <Field label="Name"><input className={inputCls} value={editGroup.name} onChange={(e) => setEditGroup({ ...editGroup, name: e.target.value })} /></Field>
+              <Field label="Icon">
+                <select className={inputCls} value={editGroup.icon} onChange={(e) => setEditGroup({ ...editGroup, icon: e.target.value })}>
+                  {GROUP_ICONS.map((i) => <option key={i}>{i}</option>)}
+                </select>
+              </Field>
+            </div>
+            <Field label="Lights in this group">
+              <div className="space-y-2">
+                {s.lights.map((l) => (
+                  <label key={l.id} className="flex items-center gap-3 rounded-xl bg-white/5 px-3 py-2 text-sm">
+                    <input type="checkbox" checked={editGroup.deviceIds.includes(l.id)}
+                      onChange={(e) => setEditGroup({ ...editGroup, deviceIds: e.target.checked ? [...editGroup.deviceIds, l.id] : editGroup.deviceIds.filter((x) => x !== l.id) })} />
+                    {l.device.alias || l.device.name}
+                  </label>
+                ))}
+              </div>
+            </Field>
+            <div className="flex justify-between pt-2">
+              <Button variant="danger" onClick={() => { store.saveGroups(s.groups.filter((g) => g.id !== editGroup.id)); setEditGroup(null); }}>Delete</Button>
+              <Button variant="primary" disabled={!editGroup.name.trim()} onClick={() => {
+                const g = { ...editGroup, name: editGroup.name.trim() };
+                store.saveGroups(s.groups.some((x) => x.id === g.id) ? s.groups.map((x) => (x.id === g.id ? g : x)) : [...s.groups, g]);
+                setEditGroup(null);
+              }}>Save group</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function LightCard({ light, remote, groups }: { light: LightView; remote: boolean; groups: string[] }) {
+  const [alias, setAlias] = useState(light.device.alias ?? '');
+  const [editing, setEditing] = useState(false);
+  const connected = light.status === 'connected';
+  const c = light.sim ?? (light.snapshot.light.on ? light.snapshot.light.color : null);
+  const swatch = c && (!light.sim || light.sim.on) ? rgbToHex({ r: c.r, g: c.g, b: c.b }) : '#15121f';
+  return (
+    <div className="glass gp-in rounded-3xl p-4">
+      <div className="flex items-center gap-3">
+        <div className="h-12 w-12 shrink-0 rounded-2xl border border-white/10 transition-colors" style={{ background: swatch, boxShadow: swatch !== '#15121f' ? `0 0 22px ${swatch}77` : 'none' }} />
+        <div className="min-w-0 flex-1">
+          {editing ? (
+            <div className="flex gap-2">
+              <input autoFocus className={inputCls + ' py-1.5'} value={alias} placeholder={light.device.name} onChange={(e) => setAlias(e.target.value)} />
+              <Button onClick={() => { store.renameLight(light.id, alias.trim()); setEditing(false); }}>Save</Button>
+            </div>
+          ) : (
+            <button className="block max-w-full truncate text-left font-semibold hover:underline" onClick={() => !remote && setEditing(true)} title="Rename">
+              {light.device.alias || light.device.name}
+            </button>
+          )}
+          <div className="truncate text-xs text-white/40">{light.device.name} · {light.id}</div>
+        </div>
+        <StatusPill status={light.status} />
+      </div>
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        <Badge tone="purple">{elkDriver.label}</Badge>
+        {light.sim && <Badge tone="orange">Simulated</Badge>}
+        {groups.map((g) => <Badge key={g} tone="blue">{g}</Badge>)}
+      </div>
+      {light.error && <p className="mt-2 text-xs text-red-300">{light.error}</p>}
+      {!remote && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {connected ? <Button onClick={() => store.disconnect(light.id)}>Disconnect</Button> : <Button variant="primary" onClick={() => store.connectLight(light.id)}>Connect</Button>}
+          <Button onClick={() => { store.setTarget(`dev:${light.id}`); location.hash = 'color'; }}>Control / calibrate</Button>
+          <Button variant="danger" onClick={() => confirm(`Remove ${light.device.alias || light.device.name}?`) && store.removeLight(light.id)}>Remove</Button>
+        </div>
       )}
     </div>
   );

@@ -9,6 +9,8 @@ export function Automation() {
   const conflicts = findConflicts(s.rules);
   const canDetect = !!desktop || s.mode === 'remote';
   const overridden = store.automation.overrideUntil > Date.now();
+  // Apps worth matching: hide Windows services and helpers so the list stays readable.
+  const running = (s.activity?.processes ?? []).filter((p) => !SYSTEM_PROCESS.test(p)).sort();
   const save = (r: AutomationRule) => store.saveRules(s.rules.some((x) => x.id === r.id) ? s.rules.map((x) => (x.id === r.id ? r : x)) : [...s.rules, r]);
 
   return (
@@ -30,7 +32,8 @@ export function Automation() {
           {s.foreground && <Button variant="soft" onClick={() => setEdit({ id: newId('rule'), name: s.foreground!.replace(/\.exe$/i, ''), enabled: true, process: s.foreground!, trigger: 'foreground', sceneId: 'work', priority: 50, cooldownSec: 10, restorePrevious: true })}>Create rule for this app</Button>}
           {overridden && <span className="ml-auto flex items-center gap-2"><Badge tone="orange">Paused by manual change</Badge><Button onClick={() => store.clearOverride()}>Resume</Button></span>}
         </div>
-        <p className="mt-3 text-xs text-white/40">When you pick a scene by hand while a rule is active, automation pauses for {s.settings.overrideMinutes} minutes (change in Settings).</p>
+        <p className="mt-3 text-xs text-white/40">Avoid rules for apps that are open all day (browser, VS Code): they would pin the lights to one scene. Those rules are off by default.</p>
+        <p className="mt-1 text-xs text-white/40">When you pick a scene by hand while a rule is active, automation pauses for {s.settings.overrideMinutes} minutes (change in Settings).</p>
       </Card>
 
       <div className="space-y-3">
@@ -44,6 +47,7 @@ export function Automation() {
                 <div className="font-semibold">{r.name || r.process}</div>
                 <div className="text-sm text-white/50">
                   IF <code className="text-violet-200">{r.process}</code> {r.trigger === 'foreground' ? 'is focused' : 'is running'} THEN {scene?.icon} {scene?.name ?? 'missing scene'}
+                  {r.targetGroupId ? ` on ${s.groups.find((g) => g.id === r.targetGroupId)?.name ?? 'missing group'}` : ''}
                 </div>
                 <div className="mt-1 flex flex-wrap gap-1.5">
                   <Badge>Priority {r.priority}</Badge><Badge>Cooldown {r.cooldownSec}s</Badge>
@@ -66,9 +70,17 @@ export function Automation() {
         <Modal open onClose={() => setEdit(null)} title="Automation rule">
           <div className="space-y-4">
             <Field label="Name"><input className={inputCls} value={edit.name} placeholder="Cyberpunk 2077" onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
-            <Field label="Program (executable)" hint="Exact .exe name from Task Manager → Details. Wildcards allowed: steam*.exe. Use media:playing for media playback.">
+            <Field label="Program (executable)" hint="Start the game, then pick it in the list below. Wildcards allowed: steam*.exe. Use media:playing for media playback.">
               <input className={inputCls + ' font-mono'} value={edit.process} placeholder="Cyberpunk2077.exe" onChange={(e) => setEdit({ ...edit, process: e.target.value })} />
             </Field>
+            {running.length > 0 && (
+              <Field label="Or pick a running app">
+                <select className={inputCls} value="" onChange={(e) => e.target.value && setEdit({ ...edit, process: e.target.value, name: edit.name || e.target.value.replace(/[.]exe$/i, '') })}>
+                  <option value="">{running.length} apps running…</option>
+                  {running.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </Field>
+            )}
             <Field label="When">
               <select className={inputCls} value={edit.trigger} onChange={(e) => setEdit({ ...edit, trigger: e.target.value as AutomationRule['trigger'] })}>
                 <option value="running">The program is running (games)</option>
@@ -80,6 +92,14 @@ export function Automation() {
                 {s.scenes.map((sc) => <option key={sc.id} value={sc.id}>{sc.icon} {sc.name}</option>)}
               </select>
             </Field>
+            {s.groups.length > 0 && (
+              <Field label="Lights">
+                <select className={inputCls} value={edit.targetGroupId ?? ''} onChange={(e) => setEdit({ ...edit, targetGroupId: e.target.value || null })}>
+                  <option value="">All lights</option>
+                  {s.groups.map((g) => <option key={g.id} value={g.id}>{g.icon} {g.name}</option>)}
+                </select>
+              </Field>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <Field label="Priority (higher wins)"><input type="number" className={inputCls} value={edit.priority} onChange={(e) => setEdit({ ...edit, priority: +e.target.value })} /></Field>
               <Field label="Cooldown (s)"><input type="number" min={0} className={inputCls} value={edit.cooldownSec} onChange={(e) => setEdit({ ...edit, cooldownSec: Math.max(0, +e.target.value) })} /></Field>
@@ -95,3 +115,5 @@ export function Automation() {
     </div>
   );
 }
+
+const SYSTEM_PROCESS = /^(svchost|system|registry|smss|csrss|wininit|winlogon|services|lsass|lsaiso|dwm|conhost|runtimebroker|backgroundtaskhost|searchhost|searchindexer|sihost|taskhostw|fontdrvhost|ctfmon|dllhost|wmiprvse|audiodg|spoolsv|memory compression|idle|smartscreen|securityhealthservice|textinputhost|startmenuexperiencehost|shellexperiencehost|applicationframehost|wudfhost|msmpeng|nissrv|powershell|bash|node|cmd|openconsole|windowsterminal|explorer|aggregatorhost|amdfendrsr|atiesrxx|atieclxx|widgets|widgetservice|phoneexperiencehost|crashpad_handler|msedgewebview2)\.exe$/i;

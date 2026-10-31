@@ -1,8 +1,8 @@
 import { hexToRgb, mixRgb, type RGB } from './color';
 import { DeviceController, type LightState } from './controller';
-import { EffectRunner, realClock, type Clock, type SoftwareEffect } from './effects';
+import { alarmAt, EffectRunner, realClock, type Clock, type SoftwareEffect } from './effects';
 import { Emitter } from './emitter';
-import { sceneRgb, type Scene } from './scenes';
+import { playableSteps, sceneRgb, type Scene } from './scenes';
 import { dueSchedules, rampLevel, type Schedule } from './schedule';
 
 /** Every way to change the lights. Local UI, the local API and automation all go through this. */
@@ -22,7 +22,9 @@ export interface EngineSnapshot {
   activeSceneId: string | null;
   softwareEffect: SoftwareEffect | null;
   sleepTimerEndsAt: number | null;
-  ramp: { kind: 'sunrise' | 'sunset'; endsAt: number } | null;
+  ramp: { kind: 'sunrise' | 'sunset' | 'alarm'; endsAt: number } | null;
+  /** For a scene mix: the step scene currently playing. */
+  mixStepSceneId: string | null;
   activeRule: string | null;
 }
 
@@ -42,6 +44,8 @@ export class GlowEngine extends Emitter<EngineEvents> {
   private timers: unknown[] = [];
   private rampHandle: unknown = null;
   private revertHandle: ReturnType<typeof setTimeout> | null = null;
+  private mixHandle: ReturnType<typeof setTimeout> | null = null;
+  private mixStep: string | null = null;
 
   constructor(public controller: DeviceController, private clock: Clock = realClock) {
     super();
@@ -57,19 +61,27 @@ export class GlowEngine extends Emitter<EngineEvents> {
       sleepTimerEndsAt: this.sleepTimerEndsAt,
       ramp: this.ramp,
       activeRule: this.activeRule,
+      mixStepSceneId: this.mixStep,
     };
   }
 
   exec(cmd: Command): void {
     const c = this.controller;
     const isManual = cmd.type !== 'scene' || (cmd.source ?? 'manual') === 'manual';
+    // Any manual action (or turning off) stops a ringing alarm.
+    if (this.ramp?.kind === 'alarm' && isManual) this.cancelRamp();
+    if (cmd.type === 'power' && !cmd.on) this.cancelRamp();
     if (cmd.type !== 'brightness' && cmd.type !== 'power' && cmd.type !== 'speed' && cmd.type !== 'sleepTimer') {
       this.cancelRamp();
+      this.stopMix();
       if (cmd.type !== 'scene') this.activeSceneId = null;
     }
     switch (cmd.type) {
       case 'power':
-        if (!cmd.on) this.effects.stop();
+        if (!cmd.on) {
+          this.effects.stop();
+          this.stopMix();
+        }
         c.setPower(cmd.on);
         break;
       case 'color':
@@ -112,9 +124,39 @@ export class GlowEngine extends Emitter<EngineEvents> {
   applyScene(sceneId: string): void {
     const scene = this.scenes.find((s) => s.id === sceneId);
     if (!scene) return;
-    const c = this.controller;
     const prev = this.activeSceneId !== scene.id ? this.activeSceneId : null;
     this.activeSceneId = scene.id;
+    this.stopMix();
+    const steps = playableSteps(scene, this.scenes);
+    if (steps.length) this.runMix(steps, 0);
+    else if (scene.steps?.length) return; // a mix whose steps all vanished: do nothing
+    else this.renderScene(scene);
+    if (this.revertHandle) clearTimeout(this.revertHandle);
+    this.revertHandle = null;
+    if (scene.durationMin) {
+      this.revertHandle = setTimeout(() => (prev ? this.applyScene(prev) : this.exec({ type: 'power', on: false })), scene.durationMin * 60_000);
+    }
+  }
+
+  /** Scene mix: play each step scene for its duration, then loop. */
+  private runMix(steps: { sceneId: string; seconds: number }[], i: number): void {
+    const step = steps[i % steps.length];
+    const scene = this.scenes.find((s) => s.id === step.sceneId);
+    if (scene) this.renderScene(scene);
+    this.mixStep = step.sceneId;
+    this.publish();
+    this.mixHandle = setTimeout(() => this.runMix(steps, i + 1), step.seconds * 1000);
+  }
+
+  private stopMix(): void {
+    if (this.mixHandle) clearTimeout(this.mixHandle);
+    this.mixHandle = null;
+    this.mixStep = null;
+  }
+
+  /** Show one (non-mix) scene's look without touching activeSceneId or timers. */
+  private renderScene(scene: Scene): void {
+    const c = this.controller;
     const colors = sceneRgb(scene);
     if (!c.state.on) c.setPower(true);
     c.setBrightness(scene.brightness);
@@ -126,11 +168,6 @@ export class GlowEngine extends Emitter<EngineEvents> {
       this.transitionTo(colors[0] ?? { r: 255, g: 255, b: 255 }, scene.transitionMs);
     } else {
       this.effects.run({ type: scene.animation.effect, colors, speed: scene.speed });
-    }
-    if (this.revertHandle) clearTimeout(this.revertHandle);
-    this.revertHandle = null;
-    if (scene.durationMin) {
-      this.revertHandle = setTimeout(() => (prev ? this.applyScene(prev) : this.exec({ type: 'power', on: false })), scene.durationMin * 60_000);
     }
   }
 
@@ -182,6 +219,26 @@ export class GlowEngine extends Emitter<EngineEvents> {
     this.publish();
   }
 
+  /** Wake-up alarm: see alarmAt(). Runs until a manual action or power off. */
+  startAlarm(minutes: number, color = '#ff8a30'): void {
+    this.cancelRamp();
+    this.stopMix();
+    this.effects.stop();
+    this.activeSceneId = null;
+    const c = this.controller;
+    const rgb = hexToRgb(color) ?? { r: 255, g: 138, b: 48 };
+    c.setPower(true);
+    c.setBrightness(100);
+    const total = minutes * 60_000;
+    const start = this.clock.now();
+    this.ramp = { kind: 'alarm', endsAt: start + total };
+    this.rampHandle = this.clock.setInterval(() => {
+      const { level, on } = alarmAt(this.clock.now() - start, total);
+      c.renderFrame(on ? { r: Math.round(rgb.r * level), g: Math.round(rgb.g * level), b: Math.round(rgb.b * level) } : { r: 0, g: 0, b: 0 });
+    }, 100);
+    this.publish();
+  }
+
   private cancelRamp(): void {
     if (this.rampHandle != null) this.clock.clearInterval(this.rampHandle);
     this.rampHandle = null;
@@ -214,6 +271,7 @@ export class GlowEngine extends Emitter<EngineEvents> {
     else if (a.type === 'scene') this.exec({ type: 'scene', sceneId: a.sceneId, source: 'schedule' });
     else if (a.type === 'sunrise') this.startRamp('sunrise', a.minutes, a.brightness, a.color);
     else if (a.type === 'sunset') this.startRamp('sunset', a.minutes);
+    else if (a.type === 'alarm') this.startAlarm(a.minutes, a.color);
   }
 
   publish(): void {

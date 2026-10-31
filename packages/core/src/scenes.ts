@@ -20,7 +20,17 @@ export interface Scene {
   transitionMs: number;
   /** Auto-revert after N minutes (temporary scene); null = indefinite. */
   durationMin: number | null;
+  /**
+   * Scene mix: when set, the scene plays these other scenes in order, each for `seconds`,
+   * then loops. Its own colours/animation are ignored. Nested mixes are not allowed.
+   */
+  steps?: SceneStep[];
   builtin?: boolean;
+}
+
+export interface SceneStep {
+  sceneId: string;
+  seconds: number;
 }
 
 const sw = (effect: SoftwareEffectType): SceneAnimation => ({ kind: 'software', effect });
@@ -40,9 +50,21 @@ export const BUILTIN_SCENES: Scene[] = [
   s('night', 'Night', '🌙', ['#ff2a00'], 8, sw('static')),
   s('reading', 'Reading', '📖', ['#ffd9a8'], 90, sw('static')),
   s('cyberpunk', 'Cyberpunk', '🌆', ['#ff00c8', '#00f0ff', '#fff200'], 100, sw('flash'), 45),
-  s('horror', 'Horror', '👻', ['#ff0000'], 60, sw('candle'), 60),
+  s('horror', 'Horror', '👻', ['#ff0000', '#ffffff'], 100, sw('horror'), 55),
   s('custom', 'Custom', '✨', ['#ff7a00', '#5a3cff'], 80, sw('fade'), 40),
+  {
+    ...s('halloween-frights', 'Halloween frights', '🦇', ['#ff2800', '#c000ff'], 100, sw('static')),
+    steps: [{ sceneId: 'halloween', seconds: 55 }, { sceneId: 'horror', seconds: 8 }],
+  },
 ];
+
+/** Steps that can actually play: existing, non-mix scenes. */
+export function playableSteps(scene: Scene, all: Scene[]): SceneStep[] {
+  return (scene.steps ?? []).filter((st) => {
+    const target = all.find((x) => x.id === st.sceneId);
+    return target && target.id !== scene.id && !target.steps?.length && st.seconds > 0;
+  });
+}
 
 export const sceneRgb = (scene: Scene): RGB[] => scene.colors.map((h) => hexToRgb(h) ?? { r: 255, g: 255, b: 255 });
 
@@ -97,6 +119,9 @@ export function importScenes(json: string): { scenes: Scene[]; errors: string[] 
       speed: clampN(r.speed, 0, 100, 50),
       transitionMs: clampN(r.transitionMs, 0, 60_000, 800),
       durationMin: r.durationMin == null ? null : clampN(r.durationMin, 1, 24 * 60, 60),
+      ...(Array.isArray(r.steps) && r.steps.length
+        ? { steps: r.steps.slice(0, 32).filter((st) => typeof st?.sceneId === 'string').map((st) => ({ sceneId: st.sceneId, seconds: clampN(st.seconds, 1, 3600, 30) })) }
+        : {}),
     });
   });
   return { scenes, errors };

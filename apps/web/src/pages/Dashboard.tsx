@@ -13,7 +13,7 @@ export function Dashboard() {
   const mode = light.controllerEffect != null
     ? elkDriver.effects.find((e) => e.id === light.controllerEffect)?.name ?? 'Controller effect'
     : softwareEffect ? SOFTWARE_EFFECTS.find((e) => e.type === softwareEffect.type)?.name : 'Static colour';
-  const quick = ['work', 'relax', 'cinema', 'gaming', 'night', 'reading'].map((id) => s.scenes.find((x) => x.id === id)!).filter(Boolean);
+  const quick = ['work', 'relax', 'cinema', 'gaming', 'night', 'halloween-frights'].map((id) => s.scenes.find((x) => x.id === id)!).filter(Boolean);
 
   return (
     <div className="space-y-5">
@@ -74,7 +74,8 @@ export function Dashboard() {
               <span className="text-3xl">{scene?.icon ?? '—'}</span>
               <div>
                 <div className="font-semibold">{scene?.name ?? 'None'}</div>
-                <div className="flex gap-1 mt-1">{scene?.colors.map((c) => <span key={c} className="h-3 w-3 rounded-full" style={{ background: c }} />)}</div>
+                <div className="flex gap-1 mt-1">{scene?.colors.map((c, i) => <span key={i} className="h-3 w-3 rounded-full" style={{ background: c }} />)}</div>
+                {s.snapshot.mixStepSceneId && <div className="mt-1 text-xs text-violet-200">▶ now: {s.scenes.find((x) => x.id === s.snapshot.mixStepSceneId)?.name}</div>}
               </div>
             </div>
           </Card>
@@ -85,7 +86,7 @@ export function Dashboard() {
               <div className="text-sm text-white/50">{s.foreground ? `Watching · focused: ${s.foreground}` : 'No rule active'}</div>
             )}
             {sleepTimerEndsAt && <div className="mt-3 text-sm text-violet-200">💤 Sleep timer · off at {new Date(sleepTimerEndsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>}
-            {ramp && <div className="mt-3 text-sm text-orange-200">{ramp.kind === 'sunrise' ? '🌅 Sunrise' : '🌇 Fading out'} until {new Date(ramp.endsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>}
+            {ramp && <div className="mt-3 text-sm text-orange-200">{ramp.kind === 'alarm' ? '⏰ Alarm: turn the lights off to stop it · build-up' : ramp.kind === 'sunrise' ? '🌅 Sunrise' : '🌇 Fading out'} until {new Date(ramp.endsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>}
           </Card>
         </div>
       </div>

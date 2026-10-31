@@ -18,8 +18,9 @@ let win = null;
 let tray = null;
 let quitting = false;
 let pendingBtCallback = null;
-let trustedDeviceId = readJson(trustedFile)?.id ?? null;
-let autoSelectUntil = 0;
+// Chooser id picked by the user in 0.0.2 (single device); handed to the renderer once as a migration.
+const legacyTrustedId = readJson(trustedFile)?.id ?? null;
+let autoSelect = null; // { id, until }
 
 function readJson(f) {
   try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; }
@@ -50,24 +51,27 @@ function createWindow() {
   win.on('close', (e) => { if (!quitting) { e.preventDefault(); win.hide(); } }); // keep automations running in the tray
   win.webContents.setWindowOpenHandler(({ url }) => { void shell.openExternal(url); return { action: 'deny' }; });
 
-  // Web Bluetooth chooser. The UI lists devices; only a device the user picked before is auto-selected.
+  // Web Bluetooth chooser. The UI shows the list and the user picks. The only exception is reconnecting:
+  // the renderer names one id the user picked before, and only that id is auto-selected.
   win.webContents.on('select-bluetooth-device', (event, devices, callback) => {
     event.preventDefault();
     pendingBtCallback = callback;
     const list = devices.map((d) => ({ id: d.deviceId, name: d.deviceName || '' }));
-    const trusted = trustedDeviceId && list.find((d) => d.id === trustedDeviceId);
-    if (trusted && Date.now() < autoSelectUntil) {
-      autoSelectUntil = 0;
-      pendingBtCallback = null;
-      callback(trusted.id);
-      return;
+    if (autoSelect && Date.now() < autoSelect.until) {
+      const hit = list.find((d) => d.id === autoSelect.id);
+      if (hit) {
+        autoSelect = null;
+        pendingBtCallback = null;
+        callback(hit.id);
+      }
+      return; // keep scanning silently until the deadline
     }
-    if (Date.now() >= autoSelectUntil) win.webContents.send('bt-devices', list);
+    win.webContents.send('bt-devices', list);
   });
 
   const ses = win.webContents.session;
   ses.setPermissionCheckHandler((_wc, permission) => ['bluetooth', 'media', 'clipboard-sanitized-write'].includes(permission));
-  ses.setDevicePermissionHandler((d) => d.deviceType === 'bluetooth' && (!trustedDeviceId || d.device?.deviceId === trustedDeviceId));
+  ses.setDevicePermissionHandler((d) => d.deviceType === 'bluetooth');
 
   const index = path.join(WEB_DIST, 'index.html');
   if (process.env.GLOWPILOT_DEV_URL) void win.loadURL(process.env.GLOWPILOT_DEV_URL);
@@ -77,14 +81,10 @@ function createWindow() {
   win.webContents.on('did-finish-load', () => autoConnect());
 }
 
-/** Reopen the remembered controller without a click. Electron answers the chooser itself for that id only. */
+/** Give the renderer a user gesture so it can reopen saved controllers (one per call). */
 function autoConnect() {
-  if (!trustedDeviceId || !win) return;
-  autoSelectUntil = Date.now() + 20_000;
+  if (!win) return;
   void win.webContents.executeJavaScript('window.__glowpilotAutoconnect && window.__glowpilotAutoconnect()', true).catch(() => {});
-  setTimeout(() => {
-    if (pendingBtCallback && Date.now() > autoSelectUntil) { pendingBtCallback(''); pendingBtCallback = null; }
-  }, 21_000);
 }
 
 function createTray() {
@@ -102,18 +102,19 @@ function createTray() {
   tray.on('click', () => { win?.show(); win?.focus(); });
 }
 
-function saveTrusted(id) {
-  trustedDeviceId = id || null;
-  fs.mkdirSync(DATA, { recursive: true });
-  fs.writeFileSync(trustedFile, JSON.stringify({ id: trustedDeviceId }));
-}
-// The chooser's device id (Bluetooth address on Windows) differs from the renderer's Web Bluetooth id,
-// so the device the user explicitly picks in the chooser is what becomes trusted for auto-reconnect.
 ipcMain.on('bt-select', (_e, id) => {
-  if (id) saveTrusted(id);
   if (pendingBtCallback) { pendingBtCallback(id || ''); pendingBtCallback = null; }
 });
-ipcMain.on('trusted-device', (_e, id) => { if (!id) saveTrusted(null); });
+ipcMain.on('trusted-device', () => {});
+ipcMain.handle('legacy-trusted-id', () => legacyTrustedId);
+ipcMain.on('auto-select', (_e, id) => {
+  autoSelect = { id: String(id), until: Date.now() + 20_000 };
+  // Controller off or out of range: give up after 20 s so the renderer can retry later.
+  setTimeout(() => {
+    if (autoSelect && Date.now() >= autoSelect.until && pendingBtCallback) { pendingBtCallback(''); pendingBtCallback = null; autoSelect = null; }
+  }, 20_500);
+});
+ipcMain.on('autoconnect-again', () => autoConnect());
 ipcMain.on('state', (_e, s) => api.broadcastState(s));
 ipcMain.handle('pairing', () => api.pairingInfo());
 ipcMain.handle('revoke', () => api.revokeAll());

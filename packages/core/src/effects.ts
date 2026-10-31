@@ -5,7 +5,7 @@ import { hsvToRgb, mixRgb, scaleRgb, type RGB } from './color';
  * - "controller": built-in modes (0x80…) executed by the LED controller itself; one BLE write, zero traffic after.
  * - "software": computed by GlowPilot and streamed as colour frames; any palette, but needs the app running.
  */
-export type SoftwareEffectType = 'static' | 'fade' | 'breathe' | 'rainbow' | 'strobe' | 'flash' | 'cycle' | 'sequence' | 'candle';
+export type SoftwareEffectType = 'static' | 'fade' | 'breathe' | 'rainbow' | 'strobe' | 'flash' | 'cycle' | 'sequence' | 'candle' | 'horror';
 
 export interface SoftwareEffect {
   type: SoftwareEffectType;
@@ -24,6 +24,7 @@ export const SOFTWARE_EFFECTS: { type: SoftwareEffectType; name: string; descrip
   { type: 'cycle', name: 'Colour cycle', description: 'Holds each colour, then crossfades' },
   { type: 'sequence', name: 'Custom sequence', description: 'Steps through your colours in order' },
   { type: 'candle', name: 'Candle flicker', description: 'Warm random flicker' },
+  { type: 'horror', name: 'Horror', description: 'Dying-bulb flicker, blackouts and lightning' },
 ];
 
 /** Period in ms of one colour step for a speed 0–100 (higher speed = shorter). */
@@ -50,7 +51,8 @@ export function effectColorAt(e: SoftwareEffect, t: number): RGB {
     case 'rainbow':
       return hsvToRgb({ h: ((t / (p * 6)) * 360) % 360, s: 1, v: 1 });
     case 'strobe': {
-      const sp = Math.max(60, p / 4);
+      // Below ~150 ms per half-period these controllers start dropping or mixing frames.
+      const sp = Math.max(STROBE_MIN_MS, p / 4);
       const i = Math.floor(t / (sp * 2)) % n;
       return (t % (sp * 2)) < sp ? colors[i] : { r: 0, g: 0, b: 0 };
     }
@@ -63,12 +65,55 @@ export function effectColorAt(e: SoftwareEffect, t: number): RGB {
       const f = pos - i;
       return f < 0.7 ? colors[i] : mixRgb(colors[i], colors[(i + 1) % n], smooth((f - 0.7) / 0.3));
     }
-    case 'candle': {
-      const k = Math.floor(t / 90);
-      const noise = (Math.sin(k * 12.9898) * 43758.5453) % 1;
-      return scaleRgb(colors[0], 0.6 + 0.4 * Math.abs(noise));
-    }
+    case 'candle':
+      return scaleRgb(colors[0], 0.6 + 0.4 * hash(Math.floor(t / 90)));
+    case 'horror':
+      return horrorAt(colors, t, e.speed);
   }
+}
+
+export const STROBE_MIN_MS = 150;
+
+/** Deterministic pseudo-random 0–1 for an integer bucket. */
+const hash = (k: number, seed = 0) => {
+  const x = Math.sin(k * 12.9898 + seed * 78.233) * 43758.5453;
+  return x - Math.floor(x);
+};
+
+/**
+ * Horror: a dying bulb. Dim unstable flicker in the main colour, sudden blackouts,
+ * stutters, and rare lightning flashes in the second colour (white by default).
+ */
+function horrorAt(colors: RGB[], t: number, speed: number): RGB {
+  const base = colors[0];
+  const flash = colors[1] ?? { r: 255, g: 255, b: 255 };
+  const black = { r: 0, g: 0, b: 0 };
+  const tempo = 0.5 + speed / 100; // 0.5x–1.5x
+  // Lightning: one 3-second slot in ~7 gets a double flash.
+  const slot = Math.floor((t * tempo) / 3000), inSlot = (t * tempo) % 3000;
+  if (hash(slot, 1) > 0.86 && (inSlot < 90 || (inSlot > 220 && inSlot < 300))) return flash;
+  // Blackout: one 1.2-second slot in ~6 goes dark, then stutters back.
+  const bslot = Math.floor((t * tempo) / 1200), inB = (t * tempo) % 1200;
+  if (hash(bslot, 2) > 0.83) {
+    if (inB < 700) return black;
+    return hash(Math.floor(inB / 60), bslot) > 0.5 ? scaleRgb(base, 0.7) : black;
+  }
+  // Unstable dim flicker, sometimes nearly off.
+  const n = hash(Math.floor((t * tempo) / 80), 3);
+  return scaleRgb(base, n < 0.08 ? 0.05 : 0.25 + 0.45 * n);
+}
+
+/**
+ * Wake-up alarm intensity. Brightens from almost off to full over `totalMs`; flashing starts
+ * halfway and speeds up; after the build-up it keeps flashing until someone turns it off.
+ */
+export function alarmAt(elapsedMs: number, totalMs: number): { level: number; on: boolean } {
+  const f = totalMs > 0 ? elapsedMs / totalMs : 1;
+  if (f >= 1) return { level: 1, on: elapsedMs % 400 < 200 };
+  const level = 0.02 + 0.98 * f * f;
+  if (f < 0.5) return { level, on: true };
+  const period = 4000 - 3400 * ((f - 0.5) / 0.5);
+  return { level, on: elapsedMs % period < period * 0.6 };
 }
 
 const smooth = (x: number) => x * x * (3 - 2 * x);
@@ -78,7 +123,8 @@ export function tickIntervalFor(e: SoftwareEffect): number {
   const p = periodFor(e.speed);
   if (e.type === 'static') return Infinity;
   if (e.type === 'flash' || e.type === 'sequence') return p;
-  if (e.type === 'strobe') return Math.max(60, p / 4);
+  if (e.type === 'strobe') return Math.max(STROBE_MIN_MS, p / 4);
+  if (e.type === 'horror') return 60;
   return Math.max(50, Math.min(150, p / 20));
 }
 

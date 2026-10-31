@@ -19,6 +19,7 @@ export function Schedules() {
           <span className="text-2xl">ⓘ</span>
           <div className="text-sm text-white/60">
             <b className="text-white/85">Schedules run in GlowPilot, not in the controller.</b> They currently run on <b>{runner}</b>, which must stay on with GlowPilot running and in Bluetooth range.
+            Turning the lights off (or any change) stops a ringing alarm.
             The controller has its own timer commands, but they are not verified on your hardware yet. See HARDWARE_COMPATIBILITY.md.
             {!desktop && s.mode !== 'remote' && ' For reliable alarms, use GlowPilot Desktop or the Android app.'}
           </div>
@@ -51,19 +52,20 @@ export function Schedules() {
         })}
       </div>
 
-      {edit && <ScheduleEditor value={edit} scenes={s.scenes} onClose={() => setEdit(null)}
+      {edit && <ScheduleEditor value={edit} scenes={s.scenes} groups={s.groups} onClose={() => setEdit(null)}
         onDelete={() => { store.saveSchedules(s.schedules.filter((x) => x.id !== edit.id)); setEdit(null); }}
         onSave={(v) => { save({ ...v, firedAt: undefined }); setEdit(null); }} />}
     </div>
   );
 }
 
-function ScheduleEditor({ value, scenes, onClose, onSave, onDelete }: {
-  value: Schedule; scenes: { id: string; name: string; icon: string }[]; onClose: () => void; onSave: (s: Schedule) => void; onDelete: () => void;
+function ScheduleEditor({ value, scenes, groups, onClose, onSave, onDelete }: {
+  value: Schedule; scenes: { id: string; name: string; icon: string }[]; groups: { id: string; name: string; icon: string }[]; onClose: () => void; onSave: (s: Schedule) => void; onDelete: () => void;
 }) {
   const [v, setV] = useState(value);
   const setAction = (type: ScheduleAction['type']) => {
-    const a: ScheduleAction = type === 'scene' ? { type, sceneId: scenes[0].id } : type === 'sunrise' ? { type, minutes: 20, brightness: 90, color: '#ffa860' } : type === 'sunset' ? { type, minutes: 15 } : { type };
+    const a: ScheduleAction = type === 'scene' ? { type, sceneId: scenes[0].id } : type === 'sunrise' ? { type, minutes: 20, brightness: 90, color: '#ffa860' }
+      : type === 'sunset' ? { type, minutes: 15 } : type === 'alarm' ? { type, minutes: 60, color: '#ff8a30' } : { type };
     setV({ ...v, action: a });
   };
   const a = v.action;
@@ -86,12 +88,21 @@ function ScheduleEditor({ value, scenes, onClose, onSave, onDelete }: {
         <Field label="Action">
           <select className={inputCls} value={a.type} onChange={(e) => setAction(e.target.value as ScheduleAction['type'])}>
             <option value="on">Turn on</option><option value="off">Turn off</option><option value="scene">Activate a scene</option>
+            <option value="alarm">Wake-up alarm (builds up, then flashes until you turn it off)</option>
             <option value="sunrise">Sunrise (gradual wake-up)</option><option value="sunset">Sunset (gradual fade-out)</option>
           </select>
         </Field>
         {a.type === 'scene' && (
           <Field label="Scene"><select className={inputCls} value={a.sceneId} onChange={(e) => setV({ ...v, action: { ...a, sceneId: e.target.value } })}>
             {scenes.map((s) => <option key={s.id} value={s.id}>{s.icon} {s.name}</option>)}</select></Field>
+        )}
+        {a.type === 'alarm' && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Build-up (minutes)" hint="Starts dim at the time above, gets brighter, flashes faster and faster, then keeps flashing until you turn the lights off.">
+              <input type="number" min={1} max={180} className={inputCls} value={a.minutes} onChange={(e) => setV({ ...v, action: { ...a, minutes: Math.max(1, +e.target.value) } })} />
+            </Field>
+            <Field label="Colour"><input type="color" className="h-11 w-full rounded-xl bg-transparent" value={a.color} onChange={(e) => setV({ ...v, action: { ...a, color: e.target.value } })} /></Field>
+          </div>
         )}
         {(a.type === 'sunrise' || a.type === 'sunset') && (
           <Field label="Duration (minutes)"><input type="number" min={1} max={120} className={inputCls} value={a.minutes} onChange={(e) => setV({ ...v, action: { ...a, minutes: Math.max(1, +e.target.value) } })} /></Field>
@@ -102,10 +113,18 @@ function ScheduleEditor({ value, scenes, onClose, onSave, onDelete }: {
             <Field label="Colour"><input type="color" className="h-11 w-full rounded-xl bg-transparent" value={a.color} onChange={(e) => setV({ ...v, action: { ...a, color: e.target.value } })} /></Field>
           </div>
         )}
+        {groups.length > 0 && (
+          <Field label="Lights">
+            <select className={inputCls} value={v.targetGroupId ?? ''} onChange={(e) => setV({ ...v, targetGroupId: e.target.value || null })}>
+              <option value="">All lights</option>
+              {groups.map((g) => <option key={g.id} value={g.id}>{g.icon} {g.name}</option>)}
+            </select>
+          </Field>
+        )}
         <label className="flex items-center justify-between text-sm">Enabled <Toggle on={v.enabled} onChange={(enabled) => setV({ ...v, enabled })} /></label>
         <div className="flex justify-between pt-2">
           <Button variant="danger" onClick={onDelete}>Delete</Button>
-          <div className="flex gap-2"><Button onClick={() => store.engine?.runScheduleAction(v)}>Test now</Button><Button variant="primary" onClick={() => onSave(v)}>Save</Button></div>
+          <div className="flex gap-2"><Button onClick={() => store.testSchedule(v)}>Test now</Button><Button variant="primary" onClick={() => onSave(v)}>Save</Button></div>
         </div>
       </div>
     </Modal>

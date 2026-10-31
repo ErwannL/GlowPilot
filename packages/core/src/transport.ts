@@ -44,6 +44,8 @@ export class SimulatorTransport implements BleTransport {
   state: SimulatedStripState = { on: false, r: 255, g: 255, b: 255, brightness: 100, speed: 50, effect: null };
   log: Uint8Array[] = [];
   failNextConnects = 0;
+  /** Fraction of written frames silently lost (no apply, no echo), to test resends. */
+  dropRate = 0;
   private notifyCbs: ((b: Uint8Array) => void)[] = [];
   private discCbs: (() => void)[] = [];
   private stateCbs: ((s: SimulatedStripState) => void)[] = [];
@@ -77,6 +79,7 @@ export class SimulatorTransport implements BleTransport {
   async write(bytes: Uint8Array): Promise<void> {
     if (!this.connected) throw new Error('Not connected');
     this.log.push(bytes);
+    if (this.dropRate && Math.random() < this.dropRate) return;
     this.apply(bytes);
     const copy = bytes.slice();
     queueMicrotask(() => this.notifyCbs.forEach((cb) => cb(copy)));

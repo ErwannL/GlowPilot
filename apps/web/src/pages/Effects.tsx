@@ -70,38 +70,15 @@ export function Effects() {
   );
 }
 
-/** Microphone-driven brightness via Web Audio. Works in browsers and Desktop; needs microphone permission. */
+/** Microphone-driven brightness. Runs in the store, so it keeps going (and can be stopped) from any page. */
 function MusicReactive() {
-  const [running, setRunning] = useState<null | (() => void)>(null);
-  const [level, setLevel] = useState(0);
+  const music = useStore((s) => s.music);
   const color = useStore((s) => s.snapshot.light.color);
-  const start = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const ctx = new AudioContext();
-      const an = ctx.createAnalyser();
-      an.fftSize = 512;
-      ctx.createMediaStreamSource(stream).connect(an);
-      const buf = new Uint8Array(an.frequencyBinCount);
-      let avg = 0;
-      const h = setInterval(() => {
-        an.getByteFrequencyData(buf);
-        const bass = buf.slice(1, 20).reduce((a, b) => a + b, 0) / 19 / 255;
-        avg = avg * 0.9 + bass * 0.1;
-        const v = Math.max(0.05, Math.min(1, (bass - avg * 0.6) * 2.4));
-        setLevel(v);
-        store.exec({ type: 'brightness', level: Math.round(10 + v * 90) });
-      }, 70);
-      setRunning(() => () => { clearInterval(h); stream.getTracks().forEach((t) => t.stop()); void ctx.close(); });
-    } catch {
-      alert('Microphone permission is required for music mode.');
-    }
-  };
   return (
     <div className="flex flex-wrap items-center gap-4">
-      <p className="flex-1 text-sm text-white/55">Listens through the microphone and pulses the brightness on the beat. The selected colour is kept.</p>
-      <div className="h-3 w-40 overflow-hidden rounded-full bg-white/10"><div className="h-full transition-all" style={{ width: `${level * 100}%`, background: rgbToHex(color) }} /></div>
-      {running ? <Button onClick={() => { running(); setRunning(null); setLevel(0); }}>Stop</Button> : <Button variant="primary" onClick={start}>Start</Button>}
+      <p className="flex-1 text-sm text-white/55">Listens through the microphone and pulses the brightness on the beat. The colour is kept, and brightness is restored when you stop.</p>
+      <div className="h-3 w-40 overflow-hidden rounded-full bg-white/10"><div className="h-full transition-all duration-75" style={{ width: `${music.level * 100}%`, background: rgbToHex(color) }} /></div>
+      {music.running ? <Button onClick={() => store.stopMusic()}>Stop</Button> : <Button variant="primary" onClick={() => void store.startMusic()}>Start</Button>}
     </div>
   );
 }

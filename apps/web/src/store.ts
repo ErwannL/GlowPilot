@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import {
-  API_PORT, AutomationEngine, BUILTIN_SCENES, DEFAULT_CALIBRATION, DeviceController, elkDriver, EXAMPLE_RULES, GlowEngine,
-  newId, SimulatorTransport, toHex,
+  API_PORT, AutomationEngine, BUILTIN_SCENES, DEFAULT_CALIBRATION, DEFAULT_STATE, DeviceController, elkDriver, EXAMPLE_RULES,
+  GlowEngine, newId, SimulatorTransport, toHex,
   type ActivitySnapshot, type AutomationRule, type BleTransport, type Calibration, type ClientMessage, type Command,
   type ConnectionStatus, type EngineSnapshot, type RemoteState, type SavedDevice, type Scene, type Schedule,
   type ServerMessage, type SimulatedStripState,
@@ -14,6 +14,11 @@ export interface DesktopBridge {
   onActivity(cb: (s: ActivitySnapshot) => void): void;
   onBluetoothDevices(cb: (list: { id: string; name: string }[]) => void): void;
   selectBluetoothDevice(id: string): void;
+  /** Let main answer the next chooser automatically, but only with this (previously user-picked) id. */
+  autoSelect?(id: string): void;
+  /** Ask main to call __glowpilotAutoconnect again with a fresh user gesture. */
+  requestAutoconnect?(): void;
+  legacyTrustedId?(): Promise<string | null>;
   setTrustedDevice(id: string | null): void;
   publishState(s: RemoteState): void;
   onRemoteCommand(cb: (clientName: string, msg: ClientMessage) => void): void;
@@ -27,13 +32,38 @@ export interface DesktopBridge {
 declare global {
   interface Window {
     glowpilotDesktop?: DesktopBridge;
+    __glowpilotAutoconnect?: () => void;
   }
 }
 export const desktop = typeof window !== 'undefined' ? window.glowpilotDesktop : undefined;
 
 export type Mode = 'local' | 'remote' | 'simulator';
 
-export interface FrameLogEntry { at: number; dir: 'tx' | 'ack'; hex: string }
+export interface FrameLogEntry { at: number; dir: 'tx' | 'ack'; hex: string; light: string }
+
+/** A saved controller. `chooserId` is the id Electron's chooser used when the user picked it. */
+export interface StoredDevice extends SavedDevice {
+  chooserId?: string;
+}
+
+export interface LightGroup {
+  id: string;
+  name: string;
+  icon: string;
+  deviceIds: string[];
+}
+
+export interface LightView {
+  id: string;
+  device: StoredDevice;
+  status: ConnectionStatus;
+  snapshot: EngineSnapshot;
+  sim: SimulatedStripState | null;
+  error: string | null;
+}
+
+/** 'all', a group id, or 'dev:<deviceId>'. */
+export type Target = string;
 
 export interface Settings {
   mode: Mode;
@@ -48,8 +78,12 @@ export interface Settings {
 export interface UIState {
   mode: Mode;
   transportKind: BleTransport['kind'] | 'none';
+  lights: LightView[];
+  groups: LightGroup[];
+  target: Target;
+  /** Primary light of the current target (first one); what single-light screens show. */
   status: ConnectionStatus;
-  device: SavedDevice | null;
+  device: StoredDevice | null;
   snapshot: EngineSnapshot;
   scenes: Scene[];
   rules: AutomationRule[];
@@ -64,6 +98,7 @@ export interface UIState {
   sim: SimulatedStripState | null;
   settings: Settings;
   btChooser: { id: string; name: string }[] | null;
+  music: { running: boolean; level: number };
 }
 
 // --- persistence ---------------------------------------------------------------
@@ -85,18 +120,51 @@ const save = (k: string, v: unknown) => {
 };
 
 /** 0.0.1 shipped a default calibration (gamma 1.6) that turned purple into blue; replace it if untouched. */
-function migrateDevice(d: SavedDevice | null): SavedDevice | null {
-  const c = d?.calibration;
-  if (d && c && c.gamma === 1.6 && c.gain.g === 0.85 && c.gain.b === 0.9 && c.warmGreenCut === 0.35)
+function migrateDevice<T extends SavedDevice>(d: T): T {
+  const c = d.calibration;
+  if (c && c.gamma === 1.6 && c.gain.g === 0.85 && c.gain.b === 0.9 && c.warmGreenCut === 0.35)
     return { ...d, calibration: { ...DEFAULT_CALIBRATION, gain: { ...DEFAULT_CALIBRATION.gain }, order: c.order } };
   return d;
 }
 
-const defaultRules =(): AutomationRule[] => EXAMPLE_RULES.map((r) => ({ ...r, id: newId('rule') }));
+function loadDevices(): StoredDevice[] {
+  const list = load<StoredDevice[] | null>('devices', null);
+  if (list) return list.map(migrateDevice);
+  const single = load<StoredDevice | null>('device', null); // ≤ 0.0.2 stored one device
+  return single ? [migrateDevice(single)] : [];
+}
+
+/** ≤ 0.0.2 enabled VS Code and could enable Chrome: both are open all day, so they must not drive the lights. */
+function loadRules(): AutomationRule[] {
+  const rules = load<AutomationRule[] | null>('rules', null);
+  if (!rules) return EXAMPLE_RULES.map((r) => ({ ...r, id: newId('rule') }));
+  if (load('migrated.rules003', false)) return rules;
+  save('migrated.rules003', true);
+  const migrated = rules.map((r) => (/^(code|chrome)\.exe$/i.test(r.process.trim()) ? { ...r, enabled: false } : r));
+  for (const ex of EXAMPLE_RULES.filter((e) => /factorygame|timberborn/i.test(e.process)))
+    if (!migrated.some((r) => r.process.toLowerCase() === ex.process.toLowerCase())) migrated.push({ ...ex, id: newId('rule') });
+  save('rules', migrated);
+  return migrated;
+}
+
 const defaultSchedules = (): Schedule[] => [
-  { id: newId('sch'), name: 'Wake up', enabled: false, time: '07:00', days: [1, 2, 3, 4, 5], action: { type: 'sunrise', minutes: 20, brightness: 90, color: '#ffa860' } },
+  { id: newId('sch'), name: 'Wake-up alarm', enabled: true, time: '06:00', days: [1, 2, 3, 4, 5], action: { type: 'alarm', minutes: 60, color: '#ff8a30' } },
   { id: newId('sch'), name: 'Wind down', enabled: false, time: '23:00', days: [0, 1, 2, 3, 4, 5, 6], action: { type: 'sunset', minutes: 15 } },
 ];
+
+function loadSchedules(): Schedule[] {
+  const list = load<Schedule[] | null>('schedules', null);
+  if (!list) return defaultSchedules();
+  if (load('migrated.sched003', false)) return list;
+  save('migrated.sched003', true);
+  // Requested in 0.0.3: weekday 6:00 alarm building up for an hour, then flashing until turned off.
+  if (!list.some((s) => s.action.type === 'alarm')) {
+    const next = [defaultSchedules()[0], ...list];
+    save('schedules', next);
+    return next;
+  }
+  return list;
+}
 
 const defaultSettings: Settings = {
   mode: WebBluetoothTransport.available || CapacitorBleTransport.available || desktop ? 'local' : 'simulator',
@@ -108,17 +176,64 @@ const defaultSettings: Settings = {
   onboarded: false,
 };
 
+const EMPTY_SNAPSHOT: EngineSnapshot = { light: { ...DEFAULT_STATE }, activeSceneId: null, softwareEffect: null, sleepTimerEndsAt: null, ramp: null, activeRule: null, mixStepSceneId: null };
+
+// --- one physical light ------------------------------------------------------------
+
+class Light {
+  controller: DeviceController;
+  engine: GlowEngine;
+  status: ConnectionStatus = 'disconnected';
+  snapshot: EngineSnapshot;
+  sim: SimulatedStripState | null = null;
+  error: string | null = null;
+  stopScheduler: () => void = () => {};
+  /** Scene to restore when the automation rule that took over this light ends. */
+  savedSceneId: string | null = null;
+
+  constructor(public device: StoredDevice, public transport: BleTransport, private onChange: () => void, onLog: (dir: 'tx' | 'ack', b: Uint8Array) => void) {
+    this.controller = new DeviceController(transport, elkDriver);
+    this.controller.device = device;
+    this.controller.state = load(`light.${device.id}`, { ...DEFAULT_STATE });
+    this.engine = new GlowEngine(this.controller);
+    this.snapshot = this.engine.snapshot();
+    if (transport instanceof SimulatorTransport) {
+      this.sim = transport.state;
+      transport.onState((s) => { this.sim = s; this.onChange(); });
+    }
+    this.controller.on('status', (s) => { this.status = s; if (s === 'connected') this.error = null; this.onChange(); });
+    this.controller.on('error', (e) => { this.error = e; this.onChange(); });
+    this.controller.on('ack', (b) => onLog('ack', b));
+    const write = transport.write.bind(transport);
+    transport.write = async (b) => { await write(b); onLog('tx', b); };
+    this.engine.on('snapshot', (snap) => { this.snapshot = snap; save(`light.${device.id}`, snap.light); this.onChange(); });
+  }
+
+  get name() { return this.device.alias || this.device.name; }
+
+  view(): LightView {
+    return { id: this.device.id, device: this.device, status: this.status, snapshot: this.snapshot, sim: this.sim, error: this.error };
+  }
+
+  dispose() {
+    this.stopScheduler();
+    this.engine.effects.stop();
+    void this.controller.disconnect().catch(() => {});
+  }
+}
+
 // --- store -------------------------------------------------------------------------
 
 class Store {
   private listeners = new Set<() => void>();
   state: UIState;
-  engine!: GlowEngine;
-  controller!: DeviceController;
+  lights: Light[] = [];
   automation = new AutomationEngine();
   private ws: WebSocket | null = null;
-  private stopScheduler: (() => void) | null = null;
   private remoteRetry: ReturnType<typeof setTimeout> | null = null;
+  private lastChooserId: string | null = null;
+  private music: { stop: () => void } | null = null;
+  private simCounter = 0;
 
   constructor() {
     const settings = { ...defaultSettings, ...load<Partial<Settings>>('settings', {}) };
@@ -127,12 +242,15 @@ class Store {
     this.state = {
       mode: settings.mode,
       transportKind: 'none',
+      lights: [],
+      groups: load('groups', []),
+      target: load('target', 'all'),
       status: 'disconnected',
-      device: migrateDevice(load<SavedDevice | null>('device', null)),
-      snapshot: { light: load('light', { on: true, color: { r: 255, g: 120, b: 40 }, brightness: 80, speed: 50, controllerEffect: null }), activeSceneId: null, softwareEffect: null, sleepTimerEndsAt: null, ramp: null, activeRule: null },
+      device: null,
+      snapshot: EMPTY_SNAPSHOT,
       scenes: [...BUILTIN_SCENES.map((b) => userScenes.find((u) => u.id === b.id) ?? b), ...userScenes.filter((u) => !BUILTIN_SCENES.some((b) => b.id === u.id))],
-      rules: load('rules', defaultRules()),
-      schedules: load('schedules', defaultSchedules()),
+      rules: loadRules(),
+      schedules: loadSchedules(),
       foreground: null,
       activity: null,
       owner: 'desktop',
@@ -143,171 +261,304 @@ class Store {
       sim: null,
       settings,
       btChooser: null,
+      music: { running: false, level: 0 },
     };
+    this.automation.rules = this.state.rules;
     this.setupMode(settings.mode);
     this.setupDesktop();
+    window.__glowpilotAutoconnect = () => void this.autoconnectNext();
   }
 
   subscribe = (cb: () => void) => {
     this.listeners.add(cb);
     return () => this.listeners.delete(cb);
   };
+
   private set(p: Partial<UIState>) {
     this.state = { ...this.state, ...p };
     this.listeners.forEach((l) => l());
     this.publishToDesktop();
   }
 
+  /** Recompute the light views and the primary-light fields. */
+  private refresh = () => {
+    if (this.state.mode === 'remote') return;
+    const lights = this.lights.map((l) => l.view());
+    const primary = this.targetLights()[0] ?? this.lights[0];
+    this.set({
+      lights,
+      device: primary?.device ?? null,
+      status: primary?.status ?? 'disconnected',
+      snapshot: primary?.snapshot ?? EMPTY_SNAPSHOT,
+      sim: primary?.sim ?? null,
+      error: primary?.error ?? null,
+    });
+  };
+
+  // --- targets & groups ---------------------------------------------------------------
+
+  /** Device ids a target refers to. */
+  deviceIdsFor(target: Target | null | undefined): string[] {
+    const all = this.lights.map((l) => l.device.id);
+    if (!target || target === 'all') return all;
+    if (target.startsWith('dev:')) return all.filter((id) => id === target.slice(4));
+    const g = this.state.groups.find((x) => x.id === target);
+    return g ? all.filter((id) => g.deviceIds.includes(id)) : all;
+  }
+
+  targetLights(target: Target = this.state.target): Light[] {
+    const ids = this.deviceIdsFor(target);
+    return this.lights.filter((l) => ids.includes(l.device.id));
+  }
+
+  setTarget(target: Target) {
+    save('target', target);
+    this.set({ target });
+    this.refresh();
+  }
+
+  saveGroups(groups: LightGroup[]) {
+    save('groups', groups);
+    this.set({ groups });
+    if (!groups.some((g) => g.id === this.state.target) && !this.state.target.startsWith('dev:')) this.setTarget('all');
+  }
+
   // --- mode setup ------------------------------------------------------------------
 
-  private makeTransport(mode: Mode): BleTransport {
+  private makeTransport(mode: Mode, simId?: string): BleTransport {
     if (mode === 'simulator') {
-      const sim = new SimulatorTransport();
-      sim.onState((s) => this.set({ sim: s }));
-      this.set({ sim: sim.state });
-      return sim;
+      const n = ++this.simCounter;
+      return new SimulatorTransport({ id: simId ?? `SIM:00:00:00:00:0${n}`, name: `ELK-BLEDDM (simulated ${n})`, rssi: -50 });
     }
     if (CapacitorBleTransport.available) return new CapacitorBleTransport();
     return new WebBluetoothTransport();
   }
 
+  private createLight(device: StoredDevice, transport: BleTransport): Light {
+    const light = new Light(device, transport, this.refresh, (dir, b) => this.pushLog(dir, b, light.name));
+    light.engine.scenes = this.state.scenes;
+    light.engine.on('manual', () => {
+      if (this.automation.activeRuleId) this.automation.manualOverride(this.state.settings.overrideMinutes);
+    });
+    light.stopScheduler = light.engine.startScheduler(
+      () => this.state.schedules.filter((s) => this.deviceIdsFor(s.targetGroupId).includes(light.device.id)),
+      (s) => { if (!s.days.length) this.saveSchedules(this.state.schedules.map((x) => (x.id === s.id ? { ...x, firedAt: Date.now() } : x))); },
+    );
+    this.lights.push(light);
+    return light;
+  }
+
   setupMode(mode: Mode) {
-    this.stopScheduler?.();
-    this.engine?.effects.stop();
-    void this.controller?.disconnect().catch(() => {});
+    this.stopMusic();
+    this.lights.forEach((l) => l.dispose());
+    this.lights = [];
     this.ws?.close();
     this.ws = null;
-    this.set({ mode, settings: { ...this.state.settings, mode }, status: 'disconnected', remote: { state: 'idle' }, sim: null, error: null });
+    this.set({ mode, settings: { ...this.state.settings, mode }, remote: { state: 'idle' }, lights: [], error: null });
     save('settings', this.state.settings);
 
     if (mode === 'remote') {
-      this.set({ transportKind: 'remote' });
+      this.set({ transportKind: 'remote', status: 'disconnected', device: null, sim: null });
       this.connectRemote();
       return;
     }
-    const transport = this.makeTransport(mode);
-    const controller = new DeviceController(transport, elkDriver);
-    controller.state = { ...this.state.snapshot.light };
-    this.controller = controller;
-    this.engine = new GlowEngine(controller);
-    this.engine.scenes = this.state.scenes;
-    this.set({ transportKind: transport.kind });
-
-    controller.on('status', (status) => this.set({ status, error: status === 'connected' ? null : this.state.error }));
-    controller.on('error', (error) => this.set({ error }));
-    controller.on('ack', (b) => this.pushLog('ack', b));
-    const origWrite = transport.write.bind(transport);
-    transport.write = async (b) => {
-      await origWrite(b);
-      this.pushLog('tx', b);
-    };
-    this.engine.on('snapshot', (snapshot) => {
-      save('light', snapshot.light);
-      this.set({ snapshot });
-    });
-    this.engine.on('manual', () => {
-      if (this.automation.activeRuleId) this.automation.manualOverride(this.state.settings.overrideMinutes);
-    });
-    this.stopScheduler = this.engine.startScheduler(
-      () => this.state.schedules,
-      (s) => { if (!s.days.length) this.saveSchedules(this.state.schedules.map((x) => (x.id === s.id ? { ...x, firedAt: Date.now() } : x))); },
-    );
-    this.automation.rules = this.state.rules;
-    this.engine.publish();
-
     if (mode === 'simulator') {
-      void controller.pick().then((d) => this.connectDevice({ ...d, calibration: this.state.device?.calibration ?? DEFAULT_CALIBRATION }, false));
-    } else if (this.state.device && CapacitorBleTransport.available) {
-      // Android reopens the device the user selected before, without a chooser.
-      void this.connectDevice(this.state.device).catch(() => {});
+      this.simCounter = 0;
+      const sims = load<StoredDevice[]>('simDevices', []);
+      const list = sims.length ? sims : [{ id: 'SIM:00:00:00:00:01', name: 'ELK-BLEDDM (simulated 1)', driverId: 'elk', calibration: DEFAULT_CALIBRATION }];
+      for (const d of list) {
+        const light = this.createLight(d, this.makeTransport('simulator', d.id));
+        void light.controller.connect(d).catch(() => {});
+      }
+    } else {
+      for (const d of loadDevices()) {
+        const light = this.createLight(d, this.makeTransport(mode));
+        // Android reopens remembered devices without a chooser; Desktop does it via __glowpilotAutoconnect.
+        if (CapacitorBleTransport.available) void light.controller.connect(d).catch(() => {});
+      }
     }
-    // Desktop: main process calls this with a user gesture and answers the chooser for the trusted device only.
-    (window as unknown as { __glowpilotAutoconnect?: () => void }).__glowpilotAutoconnect = () => {
-      if (this.state.mode === 'local' && this.state.device && this.state.status !== 'connected') void this.pickDevice();
-    };
+    this.set({ transportKind: this.lights[0]?.transport.kind ?? (CapacitorBleTransport.available ? 'capacitor' : 'web-bluetooth') });
+    this.refresh();
   }
 
-  private pushLog(dir: 'tx' | 'ack', b: Uint8Array) {
-    const log = [{ at: Date.now(), dir, hex: toHex(b) }, ...this.state.log].slice(0, 80);
+  private persistDevices() {
+    const list = this.lights.map((l) => l.device);
+    save(this.state.mode === 'simulator' ? 'simDevices' : 'devices', list);
+  }
+
+  private pushLog(dir: 'tx' | 'ack', b: Uint8Array, light: string) {
+    const log = [{ at: Date.now(), dir, hex: toHex(b), light }, ...this.state.log].slice(0, 80);
     this.set({ log, lastAckAt: dir === 'ack' ? Date.now() : this.state.lastAckAt });
   }
 
-  // --- device ------------------------------------------------------------------------
+  // --- devices ------------------------------------------------------------------------
 
-  async pickDevice() {
+  /** Scan and add a controller (or reconnect it if already known). */
+  async addLight() {
     try {
       this.set({ error: null });
-      const d = await this.controller.pick();
-      const prev = this.state.device;
-      await this.connectDevice(prev?.id === d.id ? { ...d, alias: prev.alias, calibration: prev.calibration } : d);
+      const transport = this.makeTransport(this.state.mode);
+      const probe = new DeviceController(transport, elkDriver);
+      this.lastChooserId = null;
+      const picked = await probe.pick();
+      const existing = this.lights.find((l) => l.device.id === picked.id);
+      if (existing) {
+        // Same controller picked again: give its light the fresh transport (browser permission renewed).
+        this.removeLight(existing.device.id, false);
+      }
+      const device: StoredDevice = {
+        ...picked,
+        alias: existing?.device.alias,
+        calibration: existing?.device.calibration ?? picked.calibration,
+        chooserId: this.lastChooserId ?? existing?.device.chooserId,
+      };
+      const light = this.createLight(device, transport);
+      this.persistDevices();
+      if (this.lights.length === 1) this.setTarget('all');
+      await light.controller.connect(device);
     } catch (e) {
       const msg = (e as Error).message;
       if (!/cancel/i.test(msg)) this.set({ error: msg });
     }
   }
 
-  async connectDevice(d: SavedDevice, persist = true) {
-    if (persist) {
-      save('device', d);
-      desktop?.setTrustedDevice(d.id);
-    }
-    this.set({ device: d });
-    await this.controller.connect(d);
+  /** Legacy name used by a few screens. */
+  pickDevice() {
+    return this.addLight();
   }
 
-  reconnect() {
-    if (!this.state.device) return;
-    void this.connectDevice(this.state.device).catch((e: Error) => {
-      // Browser permission for this device expired: fall back to the chooser (needs this click).
+  addSimulatedLight() {
+    const transport = this.makeTransport('simulator', `SIM:00:00:00:00:${String(this.lights.length + 1).padStart(2, '0')}`) as SimulatorTransport;
+    const d: StoredDevice = { id: transport.device.id, name: transport.device.name, driverId: 'elk', calibration: DEFAULT_CALIBRATION };
+    const light = this.createLight(d, transport);
+    this.persistDevices();
+    void light.controller.connect(d);
+    this.refresh();
+  }
+
+  connectLight(id: string) {
+    const light = this.lights.find((l) => l.device.id === id);
+    if (!light) return;
+    void light.controller.connect(light.device).catch((e: Error) => {
+      // Browser permission expired: the chooser is needed (this call comes from a click).
       if (/select the controller again/i.test(e.message)) {
-        void this.controller.disconnect();
-        void this.pickDevice();
+        void light.controller.disconnect();
+        void this.addLight();
       }
     });
   }
 
-  async disconnect() {
-    await this.controller?.disconnect();
+  reconnect() {
+    this.targetLights().filter((l) => l.status !== 'connected').forEach((l) => this.connectLight(l.device.id));
+  }
+
+  async disconnect(id?: string) {
+    await Promise.all((id ? this.lights.filter((l) => l.device.id === id) : this.targetLights()).map((l) => l.controller.disconnect()));
+  }
+
+  removeLight(id: string, persist = true) {
+    const light = this.lights.find((l) => l.device.id === id);
+    if (!light) return;
+    light.dispose();
+    this.lights = this.lights.filter((l) => l !== light);
+    if (persist) {
+      this.persistDevices();
+      if (this.state.target === `dev:${id}`) this.setTarget('all');
+    }
+    this.refresh();
   }
 
   forgetDevice() {
-    void this.disconnect();
-    save('device', null);
-    desktop?.setTrustedDevice(null);
-    this.set({ device: null });
+    const p = this.targetLights()[0];
+    if (p) this.removeLight(p.device.id);
+  }
+
+  renameLight(id: string, alias: string) {
+    const light = this.lights.find((l) => l.device.id === id);
+    if (!light) return;
+    light.device = { ...light.device, alias };
+    light.controller.device = light.device;
+    this.persistDevices();
+    this.refresh();
   }
 
   renameDevice(alias: string) {
-    if (!this.state.device) return;
-    const d = { ...this.state.device, alias };
-    save('device', d);
-    this.set({ device: d });
+    const p = this.targetLights()[0];
+    if (p) this.renameLight(p.device.id, alias);
   }
 
-  setCalibration(cal: Calibration) {
-    if (!this.state.device) return;
-    const d = { ...this.state.device, calibration: cal };
-    if (this.state.mode !== 'simulator') save('device', d);
-    this.controller.updateCalibration(cal);
-    this.set({ device: d });
+  setCalibration(cal: Calibration, id?: string) {
+    const light = id ? this.lights.find((l) => l.device.id === id) : this.targetLights()[0];
+    if (!light) return;
+    light.device = { ...light.device, calibration: cal };
+    light.controller.updateCalibration(cal);
+    this.persistDevices();
+    this.refresh();
   }
 
   sendRaw(bytes: Uint8Array) {
-    this.controller?.sendRaw(bytes);
+    this.targetLights().forEach((l) => l.controller.sendRaw(bytes));
+  }
+
+  /** Desktop: reopen saved controllers one at a time (each chooser call needs its own user gesture). */
+  private autoconnectBusy = false;
+  private async autoconnectNext() {
+    // 0.0.2 kept the chooser id in the main process; attach it to the single saved device once.
+    if (this.lights.length === 1 && !this.lights[0].device.chooserId && desktop?.legacyTrustedId) {
+      const legacy = await desktop.legacyTrustedId();
+      if (legacy) {
+        this.lights[0].device = { ...this.lights[0].device, chooserId: legacy };
+        this.persistDevices();
+      }
+    }
+    if (this.autoconnectBusy || this.state.mode !== 'local' || !desktop?.autoSelect) return;
+    const light = this.lights.find((l) => l.status !== 'connected' && l.device.chooserId && l.status !== 'connecting');
+    if (!light) return;
+    this.autoconnectBusy = true;
+    try {
+      desktop.autoSelect(light.device.chooserId!);
+      const fresh = this.makeTransport('local');
+      const d = await new DeviceController(fresh, elkDriver).pick();
+      if (d.id) {
+        const oldId = light.device.id;
+        const device = { ...light.device, id: d.id };
+        if (oldId !== d.id) {
+          // Chromium may hand out a new id for the same controller: keep groups and the target pointing at it.
+          this.saveGroups(this.state.groups.map((g) => ({ ...g, deviceIds: g.deviceIds.map((x) => (x === oldId ? d.id : x)) })));
+          if (this.state.target === `dev:${oldId}`) this.setTarget(`dev:${d.id}`);
+        }
+        this.removeLight(oldId, false);
+        const nl = this.createLight(device, fresh);
+        this.persistDevices();
+        await nl.controller.connect(device).catch(() => {});
+      }
+    } catch {
+      /* not in range: retried later */
+    } finally {
+      this.autoconnectBusy = false;
+      const more = this.lights.some((l) => l.status !== 'connected' && l.device.chooserId);
+      setTimeout(() => desktop.requestAutoconnect?.(), more ? 2_000 : 60_000);
+    }
   }
 
   // --- commands ------------------------------------------------------------------------
 
-  exec(cmd: Command) {
-    if (this.state.mode === 'remote') return this.sendRemote({ t: 'command', cmd });
+  /** Run a command on the current target (or an explicit one). */
+  exec(cmd: Command, target: Target = this.state.target) {
+    if (this.state.mode === 'remote') return this.sendRemote({ t: 'command', cmd, target });
     if (cmd.type === 'scene' && (cmd.source ?? 'manual') === 'manual' && this.automation.activeRuleId)
       this.automation.manualOverride(this.state.settings.overrideMinutes);
-    this.engine.exec(cmd);
+    if (this.music && (cmd.type === 'power' || cmd.type === 'scene' || cmd.type === 'brightness')) this.stopMusic(false);
+    for (const l of this.targetLights(target)) l.engine.exec(cmd);
+  }
+
+  testSchedule(s: Schedule) {
+    this.targetLights(s.targetGroupId ?? 'all').forEach((l) => l.engine.runScheduleAction(s));
   }
 
   saveScenes(scenes: Scene[]) {
     save('scenes', scenes.filter((s) => !s.builtin || JSON.stringify(s) !== JSON.stringify(BUILTIN_SCENES.find((b) => b.id === s.id))));
-    if (this.engine) this.engine.scenes = scenes;
+    this.lights.forEach((l) => (l.engine.scenes = scenes));
     this.set({ scenes });
     if (this.state.mode === 'remote') this.sendRemote({ t: 'saveScenes', scenes });
   }
@@ -341,26 +592,90 @@ class Store {
     this.set({});
   }
 
+  // --- music mode (lives in the store so it survives page changes) ------------------------
+
+  async startMusic() {
+    if (this.music) return;
+    const lights = this.targetLights();
+    const restore = lights.map((l) => [l, l.controller.state.brightness] as const);
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    } catch {
+      this.set({ error: 'Microphone permission is required for music mode.' });
+      return;
+    }
+    const ctx = new AudioContext();
+    const an = ctx.createAnalyser();
+    an.fftSize = 512;
+    ctx.createMediaStreamSource(stream).connect(an);
+    const buf = new Uint8Array(an.frequencyBinCount);
+    let avg = 0, lastSent = -1;
+    const h = setInterval(() => {
+      an.getByteFrequencyData(buf);
+      let sum = 0;
+      for (let i = 1; i < 20; i++) sum += buf[i];
+      const bass = sum / 19 / 255;
+      avg = avg * 0.92 + bass * 0.08;
+      const v = Math.max(0, Math.min(1, (bass - avg * 0.7) * 3));
+      const level = Math.round(8 + v * 92);
+      this.set({ music: { running: true, level: v } });
+      // Only write when the change is visible, so the BLE queue never backs up.
+      if (Math.abs(level - lastSent) >= 6) {
+        lastSent = level;
+        lights.forEach((l) => l.controller.setBrightness(level));
+      }
+    }, 80);
+    this.music = {
+      stop: () => {
+        clearInterval(h);
+        stream.getTracks().forEach((t) => t.stop());
+        void ctx.close();
+      },
+    };
+    this.set({ music: { running: true, level: 0 } });
+    this.musicRestore = restore;
+  }
+
+  private musicRestore: (readonly [Light, number])[] = [];
+
+  stopMusic(restoreBrightness = true) {
+    if (!this.music) return;
+    this.music.stop();
+    this.music = null;
+    if (restoreBrightness) this.musicRestore.forEach(([l, b]) => l.controller.setBrightness(b));
+    this.musicRestore = [];
+    this.set({ music: { running: false, level: 0 } });
+  }
+
   // --- desktop (this window is GlowPilot Desktop) -----------------------------------
 
   private setupDesktop() {
     if (!desktop) return;
     desktop.onActivity((a) => {
       this.set({ activity: a, foreground: a.foreground });
-      if (!this.state.settings.automationEnabled || this.state.mode === 'remote' || !this.engine) return;
-      const d = this.automation.evaluate(a, this.engine.activeSceneId);
+      if (!this.state.settings.automationEnabled || this.state.mode === 'remote' || !this.lights.length) return;
+      const primary = this.lights[0];
+      const d = this.automation.evaluate(a, primary.engine.activeSceneId);
       if (d.type === 'activate') {
-        this.engine.activeRule = d.ruleId;
-        this.engine.exec({ type: 'scene', sceneId: d.sceneId, source: 'automation' });
+        const rule = this.state.rules.find((r) => r.id === d.ruleId);
+        for (const l of this.targetLights(rule?.targetGroupId ?? 'all')) {
+          if (!this.automation.activeRuleId || l.engine.activeRule == null) l.savedSceneId = l.engine.activeSceneId;
+          l.engine.activeRule = d.ruleId;
+          l.engine.exec({ type: 'scene', sceneId: d.sceneId, source: 'automation' });
+        }
       } else if (d.type === 'restore') {
-        this.engine.activeRule = null;
-        if (d.sceneId) this.engine.exec({ type: 'scene', sceneId: d.sceneId, source: 'automation' });
-        else this.engine.publish();
+        for (const l of this.lights.filter((x) => x.engine.activeRule)) {
+          l.engine.activeRule = null;
+          if (l.savedSceneId) l.engine.exec({ type: 'scene', sceneId: l.savedSceneId, source: 'automation' });
+          else l.engine.publish();
+          l.savedSceneId = null;
+        }
       }
     });
     desktop.onBluetoothDevices((list) => this.set({ btChooser: list }));
     desktop.onRemoteCommand((client, msg) => {
-      if (msg.t === 'command') this.exec(msg.cmd);
+      if (msg.t === 'command') this.exec(msg.cmd, msg.target ?? 'all');
       else if (msg.t === 'saveScenes') this.saveScenes(msg.scenes);
       else if (msg.t === 'saveRules') this.saveRules(msg.rules);
       else if (msg.t === 'saveSchedules') this.saveSchedules(msg.schedules);
@@ -375,6 +690,7 @@ class Store {
   }
 
   chooseBluetooth(id: string) {
+    this.lastChooserId = id || null;
     desktop?.selectBluetoothDevice(id);
     this.set({ btChooser: null });
   }
@@ -388,6 +704,8 @@ class Store {
       desktop.publishState({
         snapshot: s.snapshot, status: s.status, deviceName: s.device ? s.device.alias || s.device.name : null,
         scenes: s.scenes, rules: s.rules, schedules: s.schedules, foreground: s.foreground, owner: s.owner,
+        lights: s.lights.map((l) => ({ id: l.id, name: l.device.alias || l.device.name, status: l.status })),
+        groups: s.groups.map((g) => ({ id: g.id, name: g.name, icon: g.icon, deviceIds: g.deviceIds })),
       });
     }, 50);
   }
@@ -422,8 +740,12 @@ class Store {
         this.set({ remote: { state: 'needsPairing', message: m.reason } });
       } else if (m.t === 'state') {
         const r = m.state;
-        this.set({ snapshot: r.snapshot, status: r.status, scenes: r.scenes, rules: r.rules, schedules: r.schedules, foreground: r.foreground, owner: r.owner,
-          device: r.deviceName ? { id: 'remote', name: r.deviceName, driverId: 'elk', calibration: DEFAULT_CALIBRATION } : null });
+        this.set({
+          snapshot: r.snapshot, status: r.status, scenes: r.scenes, rules: r.rules, schedules: r.schedules, foreground: r.foreground, owner: r.owner,
+          device: r.deviceName ? { id: 'remote', name: r.deviceName, driverId: 'elk', calibration: DEFAULT_CALIBRATION } : null,
+          groups: (r.groups ?? []) as LightGroup[],
+          lights: (r.lights ?? []).map((l) => ({ id: l.id, device: { id: l.id, name: l.name, driverId: 'elk', calibration: DEFAULT_CALIBRATION }, status: l.status, snapshot: r.snapshot, sim: null, error: null })),
+        });
       }
     };
     ws.onclose = () => {
@@ -453,3 +775,13 @@ class Store {
 
 export const store = new Store();
 export const useStore = <T,>(sel: (s: UIState) => T): T => useSyncExternalStore(store.subscribe, () => sel(store.state));
+
+/** Human label for a target. */
+export function targetLabel(s: UIState, t: Target): string {
+  if (t === 'all') return s.lights.length > 1 ? 'All lights' : s.lights[0] ? s.lights[0].device.alias || s.lights[0].device.name : 'All lights';
+  if (t.startsWith('dev:')) {
+    const l = s.lights.find((x) => x.id === t.slice(4));
+    return l ? l.device.alias || l.device.name : 'Missing light';
+  }
+  return s.groups.find((g) => g.id === t)?.name ?? 'All lights';
+}

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   applyCalibration, AutomationEngine, colorName, CommandQueue, DeviceController, effectColorAt, elkDriver,
   EXAMPLE_RULES, exportScenes, findConflicts, GlowEngine, hexToRgb, hsvToRgb, IDENTITY_CALIBRATION, importScenes,
-  kelvinToRgb, nextRun, pickRule, rampLevel, rgbToHex, rgbToHsv, BUILTIN_SCENES, SimulatorTransport, toHex,
+  kelvinToRgb, nextRun, pickRule, rampLevel, alarmAt, playableSteps, rgbToHex, rgbToHsv, BUILTIN_SCENES, SimulatorTransport, toHex,
   type AutomationRule, type Schedule,
 } from '../src';
 
@@ -193,7 +193,7 @@ describe('scenes', () => {
 });
 
 describe('automation', () => {
-  const rules: AutomationRule[] = EXAMPLE_RULES.map((r, i) => ({ ...r, id: 'r' + i }));
+  const rules: AutomationRule[] = EXAMPLE_RULES.map((r, i) => ({ ...r, id: 'r' + i, enabled: r.process !== 'chrome.exe' }));
   it('picks by priority and trigger', () => {
     expect(pickRule(rules, { processes: ['code.exe', 'cyberpunk2077.exe'], foreground: 'code.exe' })?.sceneId).toBe('cyberpunk');
     expect(pickRule(rules, { processes: ['code.exe'], foreground: 'explorer.exe' })).toBeNull();
@@ -218,7 +218,8 @@ describe('automation', () => {
   });
   it('detects shadowed rules', () => {
     const a = { ...rules[2], id: 'a' }, b = { ...rules[2], id: 'b', sceneId: 'relax' };
-    expect(findConflicts([a, b])).toEqual([{ ruleId: 'b', shadowedBy: 'a' }]);
+    const [a2, b2] = [a, b].map((r) => ({ ...r, enabled: true }));
+    expect(findConflicts([a2, b2])).toEqual([{ ruleId: 'b', shadowedBy: 'a' }]);
   });
 });
 
@@ -276,5 +277,88 @@ describe('engine integration', () => {
     expect(sim.log.length).toBe(after); // effect stopped, no traffic
     expect(sim.state.on).toBe(false);
     vi.useRealTimers();
+  });
+});
+
+describe('v0.0.3 features', () => {
+  it('horror has dim flicker, blackouts and lightning', () => {
+    const e = { type: 'horror' as const, colors: [{ r: 255, g: 0, b: 0 }, { r: 255, g: 255, b: 255 }], speed: 55 };
+    const seen = Array.from({ length: 4000 }, (_, i) => effectColorAt(e, i * 30));
+    expect(seen.some((c) => c.r === 0 && c.g === 0)).toBe(true);
+    expect(seen.some((c) => c.g === 255)).toBe(true);
+    expect(seen.some((c) => c.r > 0 && c.r < 200 && c.g === 0)).toBe(true);
+  });
+  it('strobe never flashes faster than the controller can follow', () => {
+    const e = { type: 'strobe' as const, colors: [{ r: 200, g: 0, b: 255 }], speed: 100 };
+    let changes = 0, last = '';
+    for (let t = 0; t < 3000; t += 10) { const c = JSON.stringify(effectColorAt(e, t)); if (c !== last) changes++; last = c; }
+    expect(changes).toBeLessThanOrEqual(21);
+  });
+  it('alarm builds up, starts flashing halfway, keeps flashing after', () => {
+    const total = 60 * 60_000;
+    expect(alarmAt(0, total).level).toBeLessThan(0.05);
+    expect(alarmAt(0.25 * total, total).on).toBe(true);
+    const late = Array.from({ length: 50 }, (_, i) => alarmAt(0.9 * total + i * 100, total).on);
+    expect(late).toContain(false);
+    const after = Array.from({ length: 10 }, (_, i) => alarmAt(total + 1000 + i * 100, total));
+    expect(after.every((a) => a.level === 1)).toBe(true);
+    expect(after.map((a) => a.on)).toContain(false);
+  });
+  it('alarm runs until a manual action', async () => {
+    vi.useFakeTimers();
+    const sim = new SimulatorTransport();
+    const c = new DeviceController(sim, elkDriver, { minGapMs: 0 });
+    await c.connect(await c.pick());
+    const eng = new GlowEngine(c);
+    eng.runScheduleAction({ id: 'a', name: 'wake', enabled: true, time: '06:00', days: [1], action: { type: 'alarm', minutes: 1, color: '#ff8a30' } });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(eng.snapshot().ramp?.kind).toBe('alarm');
+    eng.exec({ type: 'power', on: false });
+    expect(eng.snapshot().ramp).toBeNull();
+    const n = sim.log.length;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(sim.log.length).toBe(n);
+    vi.useRealTimers();
+  });
+  it('scene mix plays steps in order and loops', async () => {
+    vi.useFakeTimers();
+    const sim = new SimulatorTransport();
+    const c = new DeviceController(sim, elkDriver, { minGapMs: 0 });
+    await c.connect(await c.pick());
+    const eng = new GlowEngine(c);
+    eng.scenes = BUILTIN_SCENES;
+    eng.exec({ type: 'scene', sceneId: 'halloween-frights' });
+    expect(eng.snapshot()).toMatchObject({ activeSceneId: 'halloween-frights', mixStepSceneId: 'halloween' });
+    await vi.advanceTimersByTimeAsync(55_500);
+    expect(eng.snapshot().mixStepSceneId).toBe('horror');
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(eng.snapshot().mixStepSceneId).toBe('halloween');
+    eng.exec({ type: 'color', color: { r: 1, g: 1, b: 1 } });
+    expect(eng.snapshot().mixStepSceneId).toBeNull();
+    eng.effects.stop();
+    vi.useRealTimers();
+  });
+  it('ignores nested mixes and self references, imports steps', () => {
+    const mix = { ...BUILTIN_SCENES[0], id: 'm', steps: [{ sceneId: 'm', seconds: 5 }, { sceneId: 'halloween-frights', seconds: 5 }, { sceneId: 'night', seconds: 5 }] };
+    expect(playableSteps(mix, [...BUILTIN_SCENES, mix]).map((s) => s.sceneId)).toEqual(['night']);
+    const { scenes } = importScenes(exportScenes([mix]));
+    expect(scenes[0].steps).toHaveLength(3);
+  });
+  it('resends a colour frame the controller did not echo', async () => {
+    const sim = new SimulatorTransport();
+    const c = new DeviceController(sim, elkDriver, { minGapMs: 0 });
+    const d = await c.pick();
+    d.calibration = IDENTITY_CALIBRATION;
+    await c.connect(d);
+    await c.idle();
+    await new Promise((r) => setTimeout(r, 10)); // first echo arrives
+    sim.dropRate = 1;
+    c.setColor({ r: 9, g: 8, b: 7 });
+    await c.idle();
+    sim.dropRate = 0;
+    await new Promise((r) => setTimeout(r, 400));
+    await c.idle();
+    expect(c.resendCount).toBe(1);
+    expect(sim.state).toMatchObject({ r: 9, g: 8, b: 7 });
   });
 });

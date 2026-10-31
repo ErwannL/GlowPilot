@@ -1,5 +1,5 @@
 import { applyCalibration, DEFAULT_CALIBRATION, type Calibration, type RGB } from './color';
-import { normalizeName } from './protocol/elk';
+import { normalizeName, toHex } from './protocol/elk';
 import type { ProtocolDriver } from './protocol/types';
 import { CommandQueue } from './queue';
 import type { BleTransport, DiscoveredDevice } from './transport';
@@ -49,6 +49,9 @@ export class DeviceController extends Emitter<ControllerEvents> {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private manualDisconnect = false;
+  /** Last colour/effect frame written and still waiting for its FFF4 echo. */
+  private awaitingEcho: { hex: string; bytes: Uint8Array; retried: boolean; timer: ReturnType<typeof setTimeout> } | null = null;
+  resendCount = 0;
 
   constructor(
     public transport: BleTransport,
@@ -56,9 +59,17 @@ export class DeviceController extends Emitter<ControllerEvents> {
     opts: { minGapMs?: number } = {},
   ) {
     super();
-    this.queue = new CommandQueue((b) => this.transport.write(b), opts.minGapMs ?? 25);
+    this.queue = new CommandQueue(async (b) => {
+      // Track before writing: the echo can arrive before write() resolves.
+      this.trackEcho(b);
+      await this.transport.write(b);
+    }, opts.minGapMs ?? 40);
     transport.onNotify((b) => {
       this.lastAckAt = Date.now();
+      if (this.awaitingEcho && toHex(b) === this.awaitingEcho.hex) {
+        clearTimeout(this.awaitingEcho.timer);
+        this.awaitingEcho = null;
+      }
       this.emit('ack', b);
     });
     transport.onDisconnect(() => this.handleDrop());
@@ -100,6 +111,8 @@ export class DeviceController extends Emitter<ControllerEvents> {
     this.reconnectTimer = null;
     this.reconnectAttempt = 0;
     this.queue.clear();
+    if (this.awaitingEcho) clearTimeout(this.awaitingEcho.timer);
+    this.awaitingEcho = null;
     await this.transport.disconnect();
     this.setStatus('disconnected');
   }
@@ -160,6 +173,30 @@ export class DeviceController extends Emitter<ControllerEvents> {
   }
 
   // --- internals ------------------------------------------------------------
+
+  /**
+   * The controller echoes every frame it accepted on FFF4. Under load (fast strobes) BLE
+   * write-without-response frames can be lost, which showed up as wrong or missing colours.
+   * If a colour frame is not echoed within 300 ms and nothing newer replaced it, send it once more.
+   */
+  private trackEcho(b: Uint8Array): void {
+    const isColor = b[2] === 0x05 || b[2] === 0x03;
+    if (!isColor || !this.lastAckAt || !this.driver.caps(this.device?.name ?? '').echoAck) return;
+    const prev = this.awaitingEcho;
+    if (prev) clearTimeout(prev.timer);
+    const hex = toHex(b);
+    const retried = !!prev && prev.hex === hex && prev.retried;
+    this.awaitingEcho = {
+      hex, bytes: b, retried,
+      timer: setTimeout(() => {
+        const a = this.awaitingEcho;
+        if (!a || a.hex !== hex || a.retried || this.status !== 'connected') return;
+        a.retried = true;
+        this.resendCount++;
+        this.queue.push({ key: 'color', bytes: a.bytes }, true);
+      }, 300),
+    };
+  }
 
   private sendColor(): void {
     const c = applyCalibration(this.state.color, this.calibration);

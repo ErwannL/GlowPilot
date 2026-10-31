@@ -11,8 +11,11 @@ the browser. It needs no account and no cloud.
 - **Direct Bluetooth control:** power, any RGB colour, brightness, built-in controller effects and effect speed.
 - **Colour engine:** colour wheel, RGB/HSV sliders, hex, colour temperature, per-device calibration (gains, gamma, warm-green correction, channel order) so orange stays orange.
 - **Effects:** GlowPilot-computed animations (fade, breathe, rainbow, strobe, flash, cycle, custom sequence, candle) with any colours, the controller's 29 built-in effects, and microphone music mode.
+- **Several lights and groups:** put the desk strip on Gaming while the bed strip stays on Relax. Automations and schedules can target a group.
+- **Scene mixes:** chain scenes in order with a duration each, e.g. Halloween for 55 s then Horror for 8 s, on a loop.
 - **Scenes:** Halloween, Christmas, Cinema, Gaming, Work, Relax, Sunset, Night, Reading, Cyberpunk, Horror, Custom. Create, edit, duplicate, delete, import and export them as JSON.
 - **Windows automation:** rules such as *IF Cyberpunk2077.exe is running THEN Cyberpunk scene*, with foreground-window rules, priorities, cooldowns, manual override and restore-previous. Windows media playback can also trigger a rule (`media:playing`).
+- **Wake-up alarm:** starts dim, brightens and flashes faster and faster over an hour, then keeps flashing until you turn it off.
 - **Schedules:** on/off, scenes, sunrise wake-up, sunset fade-out, weekly repetition, one-shot schedules, sleep timer.
 - **Phone ↔ PC:** GlowPilot Desktop exposes a paired, LAN-only API. Your phone can control the strip through the PC, or take over the Bluetooth link.
 - **Simulator and hardware test mode:** try everything without hardware, then verify each command on the real strip.

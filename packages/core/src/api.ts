@@ -13,7 +13,8 @@ export const API_PORT = 47821;
 export type ClientMessage =
   | { t: 'pair'; code: string; clientName: string }
   | { t: 'auth'; token: string }
-  | { t: 'command'; cmd: Command }
+  /** `target`: 'all', a group id or 'dev:<id>' (defaults to all lights). */
+  | { t: 'command'; cmd: Command; target?: string }
   | { t: 'saveScenes'; scenes: Scene[] }
   | { t: 'saveRules'; rules: AutomationRule[] }
   | { t: 'saveSchedules'; schedules: Schedule[] }
@@ -30,6 +31,8 @@ export interface RemoteState {
   foreground: string | null;
   /** Name of the client that currently owns the BLE link, 'desktop' when the desktop does. */
   owner: string;
+  lights?: { id: string; name: string; status: ConnectionStatus }[];
+  groups?: { id: string; name: string; icon: string; deviceIds: string[] }[];
 }
 
 export type ServerMessage =

@@ -21,7 +21,8 @@ export function SettingsPage() {
 
   const modes: { id: Mode; title: string; desc: string; ok: boolean }[] = [
     { id: 'local', title: 'Direct Bluetooth', desc: CapacitorBleTransport.available ? 'Native Android Bluetooth' : desktop != null ? 'This PC talks to the controller' : 'Web Bluetooth (Chrome / Edge)', ok: WebBluetoothTransport.available || CapacitorBleTransport.available },
-    { id: 'remote', title: 'Through GlowPilot Desktop', desc: 'Use the PC as the Bluetooth bridge over your local network', ok: !desktop },
+    // On GlowPilot Desktop itself this option makes no sense: it IS the desktop. Phones use it.
+    ...(desktop ? [] : [{ id: 'remote' as Mode, title: 'Through GlowPilot Desktop', desc: 'Use the PC as the Bluetooth bridge over your local network', ok: true }]),
     { id: 'simulator', title: 'Simulator', desc: 'Try everything without hardware', ok: true },
   ];
 
@@ -30,7 +31,8 @@ export function SettingsPage() {
       <PageHeader title="Settings" subtitle="Connection, sync and preferences." />
 
       <Card title="How this device controls the lights">
-        <div className="grid gap-3 md:grid-cols-3">
+        {desktop && <p className="mb-3 text-sm text-white/50">This is <b>GlowPilot Desktop</b>: it talks to your lights directly. Phones and other browsers connect to it (see below).</p>}
+        <div className={`grid gap-3 ${desktop ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
           {modes.map((m) => (
             <button key={m.id} disabled={!m.ok} onClick={() => store.setupMode(m.id)}
               className={`rounded-2xl border p-4 text-left transition disabled:opacity-35 ${s.mode === m.id ? 'border-violet-400/60 bg-violet-500/10' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}>
@@ -73,7 +75,9 @@ export function SettingsPage() {
               <div className="font-mono text-4xl tracking-[.3em] brand-text">{pairing.code}</div>
             </div>
             <div className="space-y-1 text-sm">
-              {pairing.addresses.map((a) => <div key={a} className="font-mono text-white/80">http://{a}:{pairing.port}</div>)}
+              {sortAddresses(pairing.addresses).map((a, i) => (
+                <div key={a} className={`font-mono ${i === 0 ? 'text-white' : 'text-white/40'}`}>http://{a}:{pairing.port}{i === 0 && <span className="ml-2 font-sans text-xs text-violet-300">← most likely</span>}</div>
+              ))}
             </div>
           </div>
           <div className="mt-4 text-sm text-white/55">Paired devices: {pairing.clients.length ? pairing.clients.join(', ') : 'none'}</div>
@@ -105,4 +109,10 @@ export function SettingsPage() {
       </Card>
     </div>
   );
+}
+
+/** Home Wi-Fi addresses (192.168.x) first; VPN, WSL/Hyper-V and link-local ones last. */
+function sortAddresses(list: string[]): string[] {
+  const rank = (a: string) => (a.startsWith('192.168.') ? 0 : a.startsWith('10.') ? 1 : a.startsWith('172.') ? 2 : 3);
+  return [...list].sort((a, b) => rank(a) - rank(b));
 }

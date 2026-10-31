@@ -20,6 +20,8 @@ export interface AutomationRule {
   cooldownSec: number;
   /** Restore the scene that was active before, when the rule stops matching. */
   restorePrevious: boolean;
+  /** Group of lights it applies to; undefined/null = all lights. */
+  targetGroupId?: string | null;
 }
 
 export interface ActivitySnapshot {
@@ -39,7 +41,9 @@ export type AutomationDecision =
 export const EXAMPLE_RULES: Omit<AutomationRule, 'id'>[] = [
   { name: 'Cyberpunk 2077', enabled: true, process: 'Cyberpunk2077.exe', trigger: 'running', sceneId: 'cyberpunk', priority: 90, cooldownSec: 10, restorePrevious: true },
   { name: 'Fortnite', enabled: true, process: 'FortniteClient-Win64-Shipping.exe', trigger: 'running', sceneId: 'gaming', priority: 80, cooldownSec: 10, restorePrevious: true },
-  { name: 'VS Code', enabled: true, process: 'Code.exe', trigger: 'foreground', sceneId: 'work', priority: 20, cooldownSec: 30, restorePrevious: true },
+  { name: 'Satisfactory', enabled: true, process: 'FactoryGame*.exe', trigger: 'running', sceneId: 'gaming', priority: 80, cooldownSec: 10, restorePrevious: true },
+  { name: 'Timberborn', enabled: true, process: 'Timberborn.exe', trigger: 'running', sceneId: 'relax', priority: 80, cooldownSec: 10, restorePrevious: true },
+  { name: 'VS Code', enabled: false, process: 'Code.exe', trigger: 'foreground', sceneId: 'work', priority: 20, cooldownSec: 30, restorePrevious: true },
   { name: 'Chrome', enabled: false, process: 'chrome.exe', trigger: 'foreground', sceneId: 'relax', priority: 10, cooldownSec: 30, restorePrevious: true },
 ];
 

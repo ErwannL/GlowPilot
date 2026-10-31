@@ -10,7 +10,9 @@ export type ScheduleAction =
   /** Gradually brighten from 1% to `brightness` over `minutes`, ending at the trigger time. */
   | { type: 'sunrise'; minutes: number; brightness: number; color: string }
   /** Gradually dim to off over `minutes`, starting at the trigger time. */
-  | { type: 'sunset'; minutes: number };
+  | { type: 'sunset'; minutes: number }
+  /** Wake-up alarm: starts at the trigger time, builds up for `minutes`, then keeps flashing until turned off. */
+  | { type: 'alarm'; minutes: number; color: string };
 
 export interface Schedule {
   id: string;
@@ -23,6 +25,8 @@ export interface Schedule {
   action: ScheduleAction;
   /** For one-shot schedules: set after firing so it does not fire again. */
   firedAt?: number;
+  /** Group of lights it applies to; undefined/null = all lights. */
+  targetGroupId?: string | null;
 }
 
 export const parseTime = (t: string): { h: number; m: number } | null => {
@@ -74,6 +78,6 @@ export function describeSchedule(s: Schedule): string {
     : s.days.map((d) => DAY_LABELS[d]).join(', ');
   const a = s.action;
   const what = a.type === 'on' ? 'Turn on' : a.type === 'off' ? 'Turn off' : a.type === 'scene' ? 'Activate scene'
-    : a.type === 'sunrise' ? `Sunrise (${a.minutes} min)` : `Fade out (${a.minutes} min)`;
+    : a.type === 'sunrise' ? `Sunrise (${a.minutes} min)` : a.type === 'alarm' ? `Wake-up alarm (${a.minutes} min build-up)` : `Fade out (${a.minutes} min)`;
   return `${what} · ${s.time} · ${days}`;
 }
