@@ -67,3 +67,22 @@ test('pairing, auth, command forwarding and revocation', async () => {
   c2.ws.close();
   api.stop();
 });
+
+test('elevated update command quotes the installer path safely', () => {
+  const Module = require('node:module');
+  const orig = Module._load;
+  Module._load = function (req, ...rest) {
+    if (req === 'electron') return { app: { getPath: () => String.raw`C:\Program Files\GlowPilot\GlowPilot.exe` }, ipcMain: {}, Notification: {} };
+    return orig.call(this, req, ...rest);
+  };
+  try {
+    delete require.cache[require.resolve('../src/updater.cjs')];
+    const { elevatedInstallCommand, isPerMachineInstall } = require('../src/updater.cjs');
+    const cmd = elevatedInstallCommand(String.raw`C:\Users\o'brien\AppData\Local\@glowpilotdesktop-updater\pending\GlowPilot-Setup-0.0.5.exe`);
+    assert.strictEqual(cmd, String.raw`Start-Process -FilePath 'C:\Users\o''brien\AppData\Local\@glowpilotdesktop-updater\pending\GlowPilot-Setup-0.0.5.exe' -ArgumentList '--updated','/S','/allusers','--force-run' -Verb RunAs`);
+    process.env.ProgramFiles = String.raw`C:\Program Files`;
+    assert.strictEqual(isPerMachineInstall(), true);
+  } finally {
+    Module._load = orig;
+  }
+});
