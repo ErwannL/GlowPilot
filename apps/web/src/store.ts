@@ -20,6 +20,9 @@ export interface DesktopBridge {
   getPairing(): Promise<{ code: string; addresses: string[]; port: number; clients: string[] }>;
   revokeClients(): Promise<void>;
   setLaunchAtLogin(on: boolean): void;
+  onUpdate?(cb: (info: { state: 'checking' | 'none' | 'downloading' | 'ready' | 'error'; version?: string; percent?: number; message?: string }) => void): void;
+  installUpdate?(): void;
+  checkForUpdates?(): void;
 }
 declare global {
   interface Window {
@@ -81,7 +84,15 @@ const save = (k: string, v: unknown) => {
   }
 };
 
-const defaultRules = (): AutomationRule[] => EXAMPLE_RULES.map((r) => ({ ...r, id: newId('rule') }));
+/** 0.0.1 shipped a default calibration (gamma 1.6) that turned purple into blue; replace it if untouched. */
+function migrateDevice(d: SavedDevice | null): SavedDevice | null {
+  const c = d?.calibration;
+  if (d && c && c.gamma === 1.6 && c.gain.g === 0.85 && c.gain.b === 0.9 && c.warmGreenCut === 0.35)
+    return { ...d, calibration: { ...DEFAULT_CALIBRATION, gain: { ...DEFAULT_CALIBRATION.gain }, order: c.order } };
+  return d;
+}
+
+const defaultRules =(): AutomationRule[] => EXAMPLE_RULES.map((r) => ({ ...r, id: newId('rule') }));
 const defaultSchedules = (): Schedule[] => [
   { id: newId('sch'), name: 'Wake up', enabled: false, time: '07:00', days: [1, 2, 3, 4, 5], action: { type: 'sunrise', minutes: 20, brightness: 90, color: '#ffa860' } },
   { id: newId('sch'), name: 'Wind down', enabled: false, time: '23:00', days: [0, 1, 2, 3, 4, 5, 6], action: { type: 'sunset', minutes: 15 } },
@@ -117,7 +128,7 @@ class Store {
       mode: settings.mode,
       transportKind: 'none',
       status: 'disconnected',
-      device: load<SavedDevice | null>('device', null),
+      device: migrateDevice(load<SavedDevice | null>('device', null)),
       snapshot: { light: load('light', { on: true, color: { r: 255, g: 120, b: 40 }, brightness: 80, speed: 50, controllerEffect: null }), activeSceneId: null, softwareEffect: null, sleepTimerEndsAt: null, ramp: null, activeRule: null },
       scenes: [...BUILTIN_SCENES.map((b) => userScenes.find((u) => u.id === b.id) ?? b), ...userScenes.filter((u) => !BUILTIN_SCENES.some((b) => b.id === u.id))],
       rules: load('rules', defaultRules()),

@@ -7,6 +7,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { LocalApiServer } = require('./server.cjs');
 const { ActivityWatcher } = require('./activity.cjs');
+const { setupAutoUpdate } = require('./updater.cjs');
 
 const API_PORT = Number(process.env.GLOWPILOT_PORT || 47821);
 const WEB_DIST = app.isPackaged ? path.join(process.resourcesPath, 'web') : path.resolve(__dirname, '../../web/dist');
@@ -125,6 +126,7 @@ app.whenReady().then(() => {
   createTray();
   try { api.start(); } catch (e) { console.error('Local API failed to start', e); }
   watcher.start();
+  setupAutoUpdate(() => win, () => { quitting = true; });
 });
 
 app.on('before-quit', () => { quitting = true; watcher.stop(); api.stop(); });

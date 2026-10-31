@@ -10,6 +10,7 @@ import { Scenes } from './pages/Scenes';
 import { Automation } from './pages/Automation';
 import { Schedules } from './pages/Schedules';
 import { SettingsPage } from './pages/Settings';
+import { UpdateBanner } from './components/UpdateBanner';
 
 export const PAGES = [
   { id: 'home', label: 'Home', icon: '◉', el: Dashboard },
@@ -97,6 +98,7 @@ export function App() {
       </header>
 
       <main className="relative z-10 mx-auto max-w-6xl px-4 pb-28 pt-6 lg:ml-64 lg:px-10 lg:pb-12 lg:pt-10 xl:mx-auto xl:pl-[17rem]">
+        <UpdateBanner />
         <Page />
       </main>
 

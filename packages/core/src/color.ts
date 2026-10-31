@@ -68,8 +68,9 @@ export interface Calibration {
 }
 
 export const DEFAULT_CALIBRATION: Calibration = {
-  gain: { r: 1, g: 0.85, b: 0.9 },
-  gamma: 1.6,
+  // Tuned on a real ELK-BLEDDM: a strong gamma turned purple into blue, so stay close to linear.
+  gain: { r: 1, g: 0.8, b: 0.85 },
+  gamma: 1.15,
   warmGreenCut: 0.35,
   order: 'rgb',
   floor: 0,

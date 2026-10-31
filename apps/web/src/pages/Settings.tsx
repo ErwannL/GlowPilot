@@ -3,6 +3,7 @@ import { desktop, store, useStore, type Mode } from '../store';
 import { WebBluetoothTransport } from '../transports/webBluetooth';
 import { CapacitorBleTransport } from '../transports/capacitor';
 import { Badge, Button, Card, Field, inputCls, PageHeader } from '../components/ui';
+import { APP_VERSION } from '../components/UpdateBanner';
 
 export function SettingsPage() {
   const s = useStore((x) => x);
@@ -96,8 +97,9 @@ export function SettingsPage() {
 
       <Card title="About">
         <div className="text-sm text-white/55 space-y-1">
-          <div><b className="brand-text">GlowPilot</b> 0.1.0: Your lights. Your atmosphere.</div>
-          <div>Works fully offline. No account, no cloud.</div>
+          <div><b className="brand-text">GlowPilot</b> {APP_VERSION}: Your lights. Your atmosphere.</div>
+          <div>Works fully offline. No account, no cloud. Updates are checked on GitHub Releases.</div>
+          {desktop?.checkForUpdates && <Button className="mt-2" onClick={() => desktop!.checkForUpdates!()}>Check for updates</Button>}
           <div>Protocol research credits: Rxflex/LotusLantern (MIT), chameleonbr/LED_UNION (MIT), MikitaLeush/led-control, razibit/Lotus-Lantern-for-Windows-PC.</div>
         </div>
       </Card>

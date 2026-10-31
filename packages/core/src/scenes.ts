@@ -30,7 +30,7 @@ const s = (id: string, name: string, icon: string, colors: string[], brightness:
 });
 
 export const BUILTIN_SCENES: Scene[] = [
-  s('halloween', 'Halloween', '🎃', ['#ff5a00', '#7a00ff', '#22ff00'], 85, sw('fade'), 35),
+  s('halloween', 'Halloween', '🎃', ['#ff2800', '#c000ff', '#ff2800', '#40ff00'], 100, sw('cycle'), 30),
   s('christmas', 'Christmas', '🎄', ['#ff0010', '#00ff30', '#ffd27a'], 85, sw('cycle'), 30),
   s('cinema', 'Cinema', '🎬', ['#1a0a40'], 18, sw('static')),
   s('gaming', 'Gaming', '🎮', ['#7a00ff', '#0040ff', '#ff0090'], 100, sw('fade'), 55),
