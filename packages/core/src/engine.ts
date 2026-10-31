@@ -2,7 +2,7 @@ import { hexToRgb, mixRgb, type RGB } from './color';
 import { DeviceController, type LightState } from './controller';
 import { alarmAt, EffectRunner, realClock, type Clock, type SoftwareEffect } from './effects';
 import { Emitter } from './emitter';
-import { playableSteps, sceneRgb, type Scene } from './scenes';
+import { playableSteps, sceneRgb, stepScene, type Scene, type SceneStep } from './scenes';
 import { dueSchedules, rampLevel, type Schedule } from './schedule';
 
 /** Every way to change the lights. Local UI, the local API and automation all go through this. */
@@ -139,11 +139,11 @@ export class GlowEngine extends Emitter<EngineEvents> {
   }
 
   /** Scene mix: play each step scene for its duration, then loop. */
-  private runMix(steps: { sceneId: string; seconds: number }[], i: number): void {
+  private runMix(steps: SceneStep[], i: number): void {
     const step = steps[i % steps.length];
-    const scene = this.scenes.find((s) => s.id === step.sceneId);
+    const scene = stepScene(step, this.scenes);
     if (scene) this.renderScene(scene);
-    this.mixStep = step.sceneId;
+    this.mixStep = step.sceneId ?? `step:${i % steps.length}`;
     this.publish();
     this.mixHandle = setTimeout(() => this.runMix(steps, i + 1), step.seconds * 1000);
   }

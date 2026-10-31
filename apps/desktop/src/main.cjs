@@ -7,7 +7,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { LocalApiServer } = require('./server.cjs');
 const { ActivityWatcher } = require('./activity.cjs');
-const { setupAutoUpdate } = require('./updater.cjs');
+const { setupAutoUpdate, consumeRelaunchHidden } = require('./updater.cjs');
+const { scanSteamGames } = require('./steam.cjs');
 
 const API_PORT = Number(process.env.GLOWPILOT_PORT || 47821);
 const WEB_DIST = app.isPackaged ? path.join(process.resourcesPath, 'web') : path.resolve(__dirname, '../../web/dist');
@@ -47,7 +48,8 @@ function createWindow() {
     icon: path.join(WEB_DIST, 'icon.svg'),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true },
   });
-  win.once('ready-to-show', () => { if (!process.argv.includes('--hidden')) win.show(); });
+  const startHidden = process.argv.includes('--hidden') || consumeRelaunchHidden();
+  win.once('ready-to-show', () => { if (!startHidden) win.show(); });
   win.on('close', (e) => { if (!quitting) { e.preventDefault(); win.hide(); } }); // keep automations running in the tray
   win.webContents.setWindowOpenHandler(({ url }) => { void shell.openExternal(url); return { action: 'deny' }; });
 
@@ -118,6 +120,7 @@ ipcMain.on('autoconnect-again', () => autoConnect());
 ipcMain.on('state', (_e, s) => api.broadcastState(s));
 ipcMain.handle('pairing', () => api.pairingInfo());
 ipcMain.handle('revoke', () => api.revokeAll());
+ipcMain.handle('steam-games', () => scanSteamGames());
 ipcMain.on('login-item', (_e, on) => app.setLoginItemSettings({ openAtLogin: !!on, args: ['--hidden'] }));
 
 const watcher = new ActivityWatcher((snap) => win?.webContents.send('activity', snap));

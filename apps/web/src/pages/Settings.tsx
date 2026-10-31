@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { desktop, store, useStore, type Mode } from '../store';
+import { desktop, store, useStore, type Mode, type UpdateInfo } from '../store';
 import { WebBluetoothTransport } from '../transports/webBluetooth';
 import { CapacitorBleTransport } from '../transports/capacitor';
 import { Badge, Button, Card, Field, inputCls, PageHeader } from '../components/ui';
@@ -103,7 +103,13 @@ export function SettingsPage() {
         <div className="text-sm text-white/55 space-y-1">
           <div><b className="brand-text">GlowPilot</b> {APP_VERSION}: Your lights. Your atmosphere.</div>
           <div>Works fully offline. No account, no cloud. Updates are checked on GitHub Releases.</div>
-          {desktop?.checkForUpdates && <Button className="mt-2" onClick={() => desktop!.checkForUpdates!()}>Check for updates</Button>}
+          {desktop?.checkForUpdates && (
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <Button onClick={() => desktop!.checkForUpdates!()} disabled={s.update?.state === 'checking'}>Check for updates</Button>
+              <span className="text-xs">{updateText(s.update)}</span>
+              {s.update?.state === 'ready' && <Button variant="primary" onClick={() => desktop!.installUpdate?.()}>Restart & update</Button>}
+            </div>
+          )}
           <div>Protocol research credits: Rxflex/LotusLantern (MIT), chameleonbr/LED_UNION (MIT), MikitaLeush/led-control, razibit/Lotus-Lantern-for-Windows-PC.</div>
         </div>
       </Card>
@@ -116,3 +122,16 @@ function sortAddresses(list: string[]): string[] {
   const rank = (a: string) => (a.startsWith('192.168.') ? 0 : a.startsWith('10.') ? 1 : a.startsWith('172.') ? 2 : 3);
   return [...list].sort((a, b) => rank(a) - rank(b));
 }
+
+function updateText(u: UIStateUpdate): string {
+  if (!u) return '';
+  switch (u.state) {
+    case 'checking': return 'Checking…';
+    case 'none': return `You're up to date (${u.current}).`;
+    case 'downloading': return `Downloading ${u.version ?? 'update'}… ${u.percent ?? 0}%`;
+    case 'ready': return `Version ${u.version} is downloaded.`;
+    case 'error': return `Update check failed: ${u.message}`;
+    default: return '';
+  }
+}
+type UIStateUpdate = UpdateInfo | null;

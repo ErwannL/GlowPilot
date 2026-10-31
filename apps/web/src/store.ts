@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import {
   API_PORT, AutomationEngine, BUILTIN_SCENES, DEFAULT_CALIBRATION, DEFAULT_STATE, DeviceController, elkDriver, EXAMPLE_RULES,
-  GlowEngine, newId, SimulatorTransport, toHex,
+  GlowEngine, newId, RETIRED_RULE_PROCESSES, SimulatorTransport, toHex,
   type ActivitySnapshot, type AutomationRule, type BleTransport, type Calibration, type ClientMessage, type Command,
   type ConnectionStatus, type EngineSnapshot, type RemoteState, type SavedDevice, type Scene, type Schedule,
   type ServerMessage, type SimulatedStripState,
@@ -25,9 +25,19 @@ export interface DesktopBridge {
   getPairing(): Promise<{ code: string; addresses: string[]; port: number; clients: string[] }>;
   revokeClients(): Promise<void>;
   setLaunchAtLogin(on: boolean): void;
-  onUpdate?(cb: (info: { state: 'checking' | 'none' | 'downloading' | 'ready' | 'error'; version?: string; percent?: number; message?: string }) => void): void;
+  onUpdate?(cb: (info: UpdateInfo) => void): void;
   installUpdate?(): void;
   checkForUpdates?(): void;
+  updateStatus?(): Promise<UpdateInfo>;
+  steamGames?(): Promise<{ appid: string; name: string; exes: string[] }[]>;
+}
+
+export interface UpdateInfo {
+  state: 'idle' | 'checking' | 'none' | 'downloading' | 'ready' | 'error';
+  version?: string;
+  current?: string;
+  percent?: number;
+  message?: string;
 }
 declare global {
   interface Window {
@@ -99,6 +109,7 @@ export interface UIState {
   settings: Settings;
   btChooser: { id: string; name: string }[] | null;
   music: { running: boolean; level: number };
+  update: UpdateInfo | null;
 }
 
 // --- persistence ---------------------------------------------------------------
@@ -134,17 +145,31 @@ function loadDevices(): StoredDevice[] {
   return single ? [migrateDevice(single)] : [];
 }
 
-/** ≤ 0.0.2 enabled VS Code and could enable Chrome: both are open all day, so they must not drive the lights. */
+/**
+ * Rules migration (0.0.4): the old examples (Cyberpunk, Fortnite, VS Code, Chrome) are not the user's apps,
+ * so remove them, and add the user's games that are missing.
+ */
 function loadRules(): AutomationRule[] {
   const rules = load<AutomationRule[] | null>('rules', null);
   if (!rules) return EXAMPLE_RULES.map((r) => ({ ...r, id: newId('rule') }));
-  if (load('migrated.rules003', false)) return rules;
-  save('migrated.rules003', true);
-  const migrated = rules.map((r) => (/^(code|chrome)\.exe$/i.test(r.process.trim()) ? { ...r, enabled: false } : r));
-  for (const ex of EXAMPLE_RULES.filter((e) => /factorygame|timberborn/i.test(e.process)))
-    if (!migrated.some((r) => r.process.toLowerCase() === ex.process.toLowerCase())) migrated.push({ ...ex, id: newId('rule') });
+  if (load('migrated.rules004', false)) return rules;
+  save('migrated.rules004', true);
+  const migrated = rules.filter((r) => !RETIRED_RULE_PROCESSES.includes(r.process.trim().toLowerCase()));
+  for (const ex of EXAMPLE_RULES)
+    if (!migrated.some((r) => r.name.toLowerCase() === ex.name.toLowerCase() || r.process.toLowerCase() === ex.process.toLowerCase()))
+      migrated.push({ ...ex, id: newId('rule') });
   save('rules', migrated);
   return migrated;
+}
+
+/** 0.0.4 rebuilt Halloween as a mix; drop saved copies of the old Halloween / Halloween frights so the new one shows. */
+function loadUserScenes(): Scene[] {
+  const scenes = load<Scene[]>('scenes', []);
+  if (load('migrated.scenes004', false)) return scenes;
+  save('migrated.scenes004', true);
+  const kept = scenes.filter((x) => x.id !== 'halloween' && x.id !== 'halloween-frights');
+  save('scenes', kept);
+  return kept;
 }
 
 const defaultSchedules = (): Schedule[] => [
@@ -238,7 +263,7 @@ class Store {
   constructor() {
     const settings = { ...defaultSettings, ...load<Partial<Settings>>('settings', {}) };
     if (location.port === String(API_PORT) && !settings.remoteUrl) settings.remoteUrl = `ws://${location.host}`;
-    const userScenes = load<Scene[]>('scenes', []);
+    const userScenes = loadUserScenes();
     this.state = {
       mode: settings.mode,
       transportKind: 'none',
@@ -262,6 +287,7 @@ class Store {
       settings,
       btChooser: null,
       music: { running: false, level: 0 },
+      update: null,
     };
     this.automation.rules = this.state.rules;
     this.setupMode(settings.mode);
@@ -652,6 +678,8 @@ class Store {
 
   private setupDesktop() {
     if (!desktop) return;
+    desktop.onUpdate?.((update) => this.set({ update }));
+    void desktop.updateStatus?.().then((update) => this.set({ update }));
     desktop.onActivity((a) => {
       this.set({ activity: a, foreground: a.foreground });
       if (!this.state.settings.automationEnabled || this.state.mode === 'remote' || !this.lights.length) return;

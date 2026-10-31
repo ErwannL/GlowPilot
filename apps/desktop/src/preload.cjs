@@ -17,4 +17,6 @@ contextBridge.exposeInMainWorld('glowpilotDesktop', {
   onUpdate: (cb) => ipcRenderer.on('update', (_e, info) => cb(info)),
   installUpdate: () => ipcRenderer.send('update-install'),
   checkForUpdates: () => ipcRenderer.send('update-check'),
+  updateStatus: () => ipcRenderer.invoke('update-status'),
+  steamGames: () => ipcRenderer.invoke('steam-games'),
 });

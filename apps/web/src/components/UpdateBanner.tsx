@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
-import { desktop } from '../store';
+import { desktop, useStore } from '../store';
 import { Button } from './ui';
 
 declare const __APP_VERSION__: string;
@@ -17,21 +17,16 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-type DesktopUpdate = { state: 'checking' | 'none' | 'downloading' | 'ready' | 'error'; version?: string; percent?: number; message?: string };
-
 /**
  * Windows: electron-updater downloads in the background; we offer "Restart now".
  * Android: Android never lets an app install silently, so we download the new APK and the user taps Install.
  */
 export function UpdateBanner() {
-  const [desk, setDesk] = useState<DesktopUpdate | null>(null);
+  const desk = useStore((s) => s.update);
   const [apk, setApk] = useState<{ version: string; url: string } | null>(null);
 
   useEffect(() => {
-    if (desktop?.onUpdate) {
-      desktop.onUpdate(setDesk);
-      return;
-    }
+    if (desktop) return;
     if (!Capacitor.isNativePlatform()) return;
     const check = () =>
       fetch(RELEASES_API, { headers: { Accept: 'application/vnd.github+json' } })
@@ -54,7 +49,7 @@ export function UpdateBanner() {
     );
   if (desk?.state === 'ready')
     return (
-      <Bar text={`GlowPilot ${desk.version} is ready. It installs automatically when you quit, or now:`}>
+      <Bar text={`GlowPilot ${desk.version} is ready. It installs by itself when GlowPilot is in the tray, or now:`}>
         <Button variant="primary" onClick={() => desktop?.installUpdate?.()}>Restart & update</Button>
       </Bar>
     );

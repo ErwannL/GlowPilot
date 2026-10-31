@@ -1,13 +1,15 @@
 import { useState } from 'react';
-import { duplicateScene, effectColorAt, elkDriver, exportScenes, hexToRgb, importScenes, newId, rgbToHex, sceneRgb, SOFTWARE_EFFECTS, type Scene, type SceneStep } from '@glowpilot/core';
+import { duplicateScene, effectColorAt, elkDriver, exportScenes, hexToRgb, importScenes, newId, rgbToHex, sceneRgb, SOFTWARE_EFFECTS, stepScene, type Scene, type SceneAnimation, type SceneStep } from '@glowpilot/core';
 import { store, useStore } from '../store';
 import { Badge, Button, Card, Field, inputCls, Modal, PageHeader, Slider, Swatch } from '../components/ui';
 import { download, pickFile, useNow } from '../hooks';
+import { stepLabel } from './Dashboard';
 
 export function Scenes() {
   const scenes = useStore((s) => s.scenes);
   const active = useStore((s) => s.snapshot.activeSceneId);
-  const mixStep = useStore((s) => s.snapshot.mixStepSceneId);
+  const snap = useStore((s) => s.snapshot);
+  const mixStep = snap.mixStepSceneId;
   const [editing, setEditing] = useState<Scene | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const now = useNow(100);
@@ -34,7 +36,7 @@ export function Scenes() {
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
         {scenes.map((s) => {
-          const look = s.steps?.length ? scenes.find((x) => x.id === s.steps![0].sceneId) ?? s : s;
+          const look = (s.steps?.length && stepScene(s.steps[0], scenes)) || s;
           const preview = look.animation.kind === 'software' ? rgbToHex(effectColorAt({ type: look.animation.effect, colors: sceneRgb(look), speed: look.speed }, now)) : look.colors[0];
           return (
             <div key={s.id} className={`glass gp-in group relative overflow-hidden rounded-3xl p-4 transition ${active === s.id ? 'ring-2 ring-white/50' : ''}`}>
@@ -44,11 +46,11 @@ export function Scenes() {
                 <div className="mt-3 font-semibold">{s.name}</div>
                 <div className="mt-1 flex gap-1">{s.colors.map((c, i) => <span key={i} className="h-3 w-3 rounded-full" style={{ background: c }} />)}</div>
                 <div className="mt-2 text-[11px] text-white/45">
-                  {s.steps?.length ? `Mix: ${s.steps.map((st) => scenes.find((x) => x.id === st.sceneId)?.name ?? '?').join(' → ')}` : <>{s.animation.kind === 'controller' ? 'Controller effect' : SOFTWARE_EFFECTS.find((e) => e.type === (s.animation as { effect: string }).effect)?.name} · {s.brightness}%
+                  {s.steps?.length ? `Mix: ${s.steps.map((st) => (st.look ? effectName(st.look.animation) : scenes.find((x) => x.id === st.sceneId)?.name ?? '?')).join(' → ')}` : <>{s.animation.kind === 'controller' ? 'Controller effect' : SOFTWARE_EFFECTS.find((e) => e.type === (s.animation as { effect: string }).effect)?.name} · {s.brightness}%
                   </>}
                   {s.durationMin ? ` · ${s.durationMin} min` : ''}
                 </div>
-                {active === s.id && mixStep && s.steps?.length ? <div className="mt-1 text-[11px] text-violet-200">▶ now: {scenes.find((x) => x.id === mixStep)?.name}</div> : null}
+                {active === s.id && mixStep && s.steps?.length ? <div className="mt-1 text-[11px] text-violet-200">▶ now: {stepLabel(snap, scenes)}</div> : null}
               </button>
               <div className="relative mt-3 flex gap-1 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
                 <button className="rounded-lg bg-white/10 px-2 py-1 text-[11px]" onClick={() => setEditing(s)}>Edit</button>
@@ -96,26 +98,23 @@ function SceneEditor({ scene, scenes, onClose, onSave }: { scene: Scene; scenes:
         </div>
         <div className="flex gap-2 rounded-2xl bg-white/5 p-1">
           <button className={`flex-1 rounded-xl px-3 py-2 text-sm ${!isMix ? 'bg-white/15' : 'text-white/50'}`} onClick={() => { const { steps: _s, ...rest } = s; setS(rest); }}>Single look</button>
-          <button className={`flex-1 rounded-xl px-3 py-2 text-sm ${isMix ? 'bg-white/15' : 'text-white/50'}`} onClick={() => setS({ ...s, steps: s.steps ?? [{ sceneId: stepChoices[0]?.id ?? 'halloween', seconds: 55 }, { sceneId: 'horror', seconds: 8 }] })}>Scene mix</button>
+          <button className={`flex-1 rounded-xl px-3 py-2 text-sm ${isMix ? 'bg-white/15' : 'text-white/50'}`} onClick={() => setS({ ...s, steps: s.steps ?? [
+              { seconds: 20, look: { animation: s.animation, colors: s.colors, speed: s.speed, brightness: s.brightness } },
+              { seconds: 8, sceneId: 'horror' },
+            ] })}>Scene mix</button>
         </div>
         {isMix ? (
-          <Field label="Steps (played in order, then repeated)" hint="Example: Halloween for 55 s, then Horror for 8 s, so a scare comes every minute.">
+          <Field label="Steps (played in order, then repeated)" hint="Mix anything: an effect with its own colours (colour cycle orange/violet, a strobe, horror…) or a whole saved scene.">
             <div className="space-y-2">
               {(s.steps ?? []).map((st, i) => (
-                <div key={i} className="flex flex-wrap items-center gap-2 rounded-xl bg-white/5 p-2">
-                  <span className="w-5 text-center text-xs text-white/40">{i + 1}</span>
-                  <select className={inputCls + ' min-w-[11rem] flex-1 basis-40 py-2'} value={st.sceneId} onChange={(e) => setSteps(s.steps!.map((x, j) => (j === i ? { ...x, sceneId: e.target.value } : x)))}>
-                    {stepChoices.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
-                  </select>
-                  <input type="number" min={1} max={3600} className={inputCls.replace('w-full', 'w-20 shrink-0') + ' py-2'} value={st.seconds}
-                    onChange={(e) => setSteps(s.steps!.map((x, j) => (j === i ? { ...x, seconds: Math.max(1, +e.target.value) } : x)))} />
-                  <span className="text-xs text-white/40">s</span>
-                  <button className="rounded-lg bg-white/10 px-2 py-1 text-xs" onClick={() => move(i, -1)} aria-label="Move up">↑</button>
-                  <button className="rounded-lg bg-white/10 px-2 py-1 text-xs" onClick={() => move(i, 1)} aria-label="Move down">↓</button>
-                  <button className="rounded-lg bg-red-500/20 px-2 py-1 text-xs" onClick={() => setSteps(s.steps!.filter((_, j) => j !== i))} aria-label="Remove">✕</button>
-                </div>
+                <StepRow key={i} index={i} step={st} choices={stepChoices}
+                  onChange={(n) => setSteps(s.steps!.map((x, j) => (j === i ? n : x)))}
+                  onMove={(d) => move(i, d)} onRemove={() => setSteps(s.steps!.filter((_, j) => j !== i))} />
               ))}
-              <Button variant="soft" onClick={() => setSteps([...(s.steps ?? []), { sceneId: stepChoices[0]?.id ?? 'relax', seconds: 30 }])}>+ Add step</Button>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="soft" onClick={() => setSteps([...(s.steps ?? []), { seconds: 10, look: { animation: { kind: 'software', effect: 'strobe' }, colors: ['#ff3c00', '#b000ff'], speed: 80, brightness: 100 } }])}>+ Effect step</Button>
+                <Button variant="soft" onClick={() => setSteps([...(s.steps ?? []), { sceneId: stepChoices[0]?.id ?? 'horror', seconds: 30 }])}>+ Scene step</Button>
+              </div>
             </div>
           </Field>
         ) : (<>
@@ -157,5 +156,57 @@ function SceneEditor({ scene, scenes, onClose, onSave }: { scene: Scene; scenes:
         </div>
       </div>
     </Modal>
+  );
+}
+
+const effectName = (a: SceneAnimation) =>
+  a.kind === 'controller' ? elkDriver.effects.find((e) => e.id === a.effectId)?.name ?? 'Controller effect' : SOFTWARE_EFFECTS.find((e) => e.type === a.effect)?.name ?? a.effect;
+
+/** One mix step: pick a saved scene, or "Effect" to define colours + animation right here. */
+function StepRow({ index, step, choices, onChange, onMove, onRemove }: {
+  index: number; step: SceneStep; choices: Scene[]; onChange: (s: SceneStep) => void; onMove: (d: number) => void; onRemove: () => void;
+}) {
+  const [pick, setPick] = useState('#ff3c00');
+  const look = step.look;
+  const animValue = look ? (look.animation.kind === 'controller' ? `c:${look.animation.effectId}` : `s:${look.animation.effect}`) : '';
+  return (
+    <div className="space-y-2 rounded-xl bg-white/5 p-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="w-5 text-center text-xs text-white/40">{index + 1}</span>
+        <select className={inputCls + ' min-w-[11rem] flex-1 basis-40 py-2'} value={look ? '__look' : step.sceneId}
+          onChange={(e) => onChange(e.target.value === '__look'
+            ? { seconds: step.seconds, look: { animation: { kind: 'software', effect: 'cycle' }, colors: ['#ff3c00', '#b000ff'], speed: 50, brightness: 100 } }
+            : { seconds: step.seconds, sceneId: e.target.value })}>
+          <option value="__look">🎨 Effect with my colours</option>
+          <optgroup label="Saved scenes">{choices.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}</optgroup>
+        </select>
+        <input type="number" min={1} max={3600} className={inputCls.replace('w-full', 'w-20 shrink-0') + ' py-2'} value={step.seconds}
+          onChange={(e) => onChange({ ...step, seconds: Math.max(1, +e.target.value) })} />
+        <span className="text-xs text-white/40">s</span>
+        <button className="rounded-lg bg-white/10 px-2 py-1 text-xs" onClick={() => onMove(-1)} aria-label="Move up">↑</button>
+        <button className="rounded-lg bg-white/10 px-2 py-1 text-xs" onClick={() => onMove(1)} aria-label="Move down">↓</button>
+        <button className="rounded-lg bg-red-500/20 px-2 py-1 text-xs" onClick={onRemove} aria-label="Remove">✕</button>
+      </div>
+      {look && (
+        <div className="space-y-2 pl-7">
+          <select className={inputCls + ' py-2'} value={animValue} onChange={(e) => {
+            const [k, v] = e.target.value.split(':');
+            onChange({ ...step, look: { ...look, animation: k === 'c' ? { kind: 'controller', effectId: +v } : { kind: 'software', effect: v as never } } });
+          }}>
+            <optgroup label="GlowPilot (uses these colours)">{SOFTWARE_EFFECTS.map((e) => <option key={e.type} value={`s:${e.type}`}>{e.name}</option>)}</optgroup>
+            <optgroup label="Controller built-in">{elkDriver.effects.map((e) => <option key={e.id} value={`c:${e.id}`}>{e.name}</option>)}</optgroup>
+          </select>
+          <div className="flex flex-wrap items-center gap-2">
+            {look.colors.map((c, j) => <Swatch key={j} size="sm" color={c} onClick={() => look.colors.length > 1 && onChange({ ...step, look: { ...look, colors: look.colors.filter((_, k) => k !== j) } })} />)}
+            <input type="color" value={pick} onChange={(e) => setPick(e.target.value)} className="h-7 w-7 rounded-full bg-transparent" />
+            <button className="rounded-lg bg-white/10 px-2 py-1 text-xs" onClick={() => look.colors.length < 8 && onChange({ ...step, look: { ...look, colors: [...look.colors, pick] } })}>+ colour</button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Slider label="Speed" value={look.speed} onChange={(speed) => onChange({ ...step, look: { ...look, speed } })} />
+            <Slider label="Brightness" value={look.brightness} onChange={(brightness) => onChange({ ...step, look: { ...look, brightness } })} />
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

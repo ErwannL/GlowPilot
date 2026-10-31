@@ -193,7 +193,23 @@ describe('scenes', () => {
 });
 
 describe('automation', () => {
-  const rules: AutomationRule[] = EXAMPLE_RULES.map((r, i) => ({ ...r, id: 'r' + i, enabled: r.process !== 'chrome.exe' }));
+  const base = { enabled: true, cooldownSec: 10, restorePrevious: true };
+  const rules: AutomationRule[] = [
+    { ...base, id: 'r0', name: 'Cyberpunk', process: 'Cyberpunk2077.exe', trigger: 'running', sceneId: 'cyberpunk', priority: 90 },
+    { ...base, id: 'r1', name: 'Fortnite', process: 'FortniteClient-Win64-Shipping.exe', trigger: 'running', sceneId: 'gaming', priority: 80 },
+    { ...base, id: 'r2', name: 'VS Code', process: 'Code.exe', trigger: 'foreground', sceneId: 'work', priority: 20, cooldownSec: 30 },
+    { ...base, id: 'r3', name: 'Chrome', process: 'chrome.exe', trigger: 'foreground', sceneId: 'relax', priority: 10, enabled: false },
+  ];
+  it('ships only the user\'s games as defaults', () => {
+    const procs = EXAMPLE_RULES.map((r) => r.process.toLowerCase());
+    expect(procs).toContain('timberborn.exe');
+    expect(procs.some((p) => /code|chrome|fortnite|cyberpunk/.test(p))).toBe(false);
+  });
+  it('matches alternatives separated by |', () => {
+    const r: AutomationRule = { ...rules[0], process: 'FactoryGameSteam.exe | factorygame*shipping.exe' };
+    expect(pickRule([r], { processes: ['factorygamesteam-win64-shipping.exe'], foreground: null })).toBe(r);
+    expect(pickRule([r], { processes: ['factory.exe'], foreground: null })).toBeNull();
+  });
   it('picks by priority and trigger', () => {
     expect(pickRule(rules, { processes: ['code.exe', 'cyberpunk2077.exe'], foreground: 'code.exe' })?.sceneId).toBe('cyberpunk');
     expect(pickRule(rules, { processes: ['code.exe'], foreground: 'explorer.exe' })).toBeNull();
@@ -260,7 +276,7 @@ describe('engine integration', () => {
     const eng = new GlowEngine(c);
     eng.scenes = [
       ...BUILTIN_SCENES,
-      { ...BUILTIN_SCENES[0], id: 'hw', animation: { kind: 'controller', effectId: 0x88 } },
+      { ...BUILTIN_SCENES[0], id: 'hw', steps: undefined, animation: { kind: 'controller', effectId: 0x88 } },
     ];
     eng.exec({ type: 'scene', sceneId: 'hw' });
     await vi.advanceTimersByTimeAsync(50);
@@ -327,22 +343,33 @@ describe('v0.0.3 features', () => {
     await c.connect(await c.pick());
     const eng = new GlowEngine(c);
     eng.scenes = BUILTIN_SCENES;
-    eng.exec({ type: 'scene', sceneId: 'halloween-frights' });
-    expect(eng.snapshot()).toMatchObject({ activeSceneId: 'halloween-frights', mixStepSceneId: 'halloween' });
-    await vi.advanceTimersByTimeAsync(55_500);
-    expect(eng.snapshot().mixStepSceneId).toBe('horror');
-    await vi.advanceTimersByTimeAsync(8_000);
-    expect(eng.snapshot().mixStepSceneId).toBe('halloween');
+    eng.scenes = [...BUILTIN_SCENES, { ...BUILTIN_SCENES[0], id: 'mix', steps: [{ sceneId: 'halloween', seconds: 5 }, { sceneId: 'horror', seconds: 8 }] }];
+    // A mix that references another mix (Halloween) skips that step.
+    eng.exec({ type: 'scene', sceneId: 'mix' });
+    expect(eng.snapshot()).toMatchObject({ activeSceneId: 'mix', mixStepSceneId: 'horror' });
+    // Built-in Halloween: inline looks, in order, looping.
+    eng.exec({ type: 'scene', sceneId: 'halloween' });
+    expect(eng.snapshot()).toMatchObject({ activeSceneId: 'halloween', mixStepSceneId: 'step:0' });
+    await vi.advanceTimersByTimeAsync(18_500);
+    expect(eng.snapshot().mixStepSceneId).toBe('step:1');
+    expect(eng.snapshot().softwareEffect?.type).toBe('strobe');
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(eng.snapshot().softwareEffect?.type).toBe('horror');
+    const total = BUILTIN_SCENES[0].steps!.reduce((a, st) => a + st.seconds, 0) * 1000;
+    await vi.advanceTimersByTimeAsync(total - 22_000);
+    expect(eng.snapshot().mixStepSceneId).toBe('step:0');
     eng.exec({ type: 'color', color: { r: 1, g: 1, b: 1 } });
     expect(eng.snapshot().mixStepSceneId).toBeNull();
     eng.effects.stop();
     vi.useRealTimers();
   });
   it('ignores nested mixes and self references, imports steps', () => {
-    const mix = { ...BUILTIN_SCENES[0], id: 'm', steps: [{ sceneId: 'm', seconds: 5 }, { sceneId: 'halloween-frights', seconds: 5 }, { sceneId: 'night', seconds: 5 }] };
-    expect(playableSteps(mix, [...BUILTIN_SCENES, mix]).map((s) => s.sceneId)).toEqual(['night']);
+    const look = { animation: { kind: 'software' as const, effect: 'strobe' as const }, colors: ['#ff3c00'], speed: 80, brightness: 100 };
+    const mix = { ...BUILTIN_SCENES[0], id: 'm', steps: [{ sceneId: 'm', seconds: 5 }, { sceneId: 'halloween', seconds: 5 }, { sceneId: 'night', seconds: 5 }, { seconds: 3, look }] };
+    expect(playableSteps(mix, [...BUILTIN_SCENES, mix]).map((s) => s.sceneId ?? 'look')).toEqual(['night', 'look']);
     const { scenes } = importScenes(exportScenes([mix]));
-    expect(scenes[0].steps).toHaveLength(3);
+    expect(scenes[0].steps).toHaveLength(4);
+    expect(scenes[0].steps![3].look).toEqual(look);
   });
   it('resends a colour frame the controller did not echo', async () => {
     const sim = new SimulatorTransport();

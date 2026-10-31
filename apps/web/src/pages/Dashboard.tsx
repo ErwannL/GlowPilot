@@ -13,7 +13,7 @@ export function Dashboard() {
   const mode = light.controllerEffect != null
     ? elkDriver.effects.find((e) => e.id === light.controllerEffect)?.name ?? 'Controller effect'
     : softwareEffect ? SOFTWARE_EFFECTS.find((e) => e.type === softwareEffect.type)?.name : 'Static colour';
-  const quick = ['work', 'relax', 'cinema', 'gaming', 'night', 'halloween-frights'].map((id) => s.scenes.find((x) => x.id === id)!).filter(Boolean);
+  const quick = ['work', 'relax', 'cinema', 'gaming', 'night', 'halloween'].map((id) => s.scenes.find((x) => x.id === id)!).filter(Boolean);
 
   return (
     <div className="space-y-5">
@@ -75,7 +75,7 @@ export function Dashboard() {
               <div>
                 <div className="font-semibold">{scene?.name ?? 'None'}</div>
                 <div className="flex gap-1 mt-1">{scene?.colors.map((c, i) => <span key={i} className="h-3 w-3 rounded-full" style={{ background: c }} />)}</div>
-                {s.snapshot.mixStepSceneId && <div className="mt-1 text-xs text-violet-200">▶ now: {s.scenes.find((x) => x.id === s.snapshot.mixStepSceneId)?.name}</div>}
+                {s.snapshot.mixStepSceneId && <div className="mt-1 text-xs text-violet-200">▶ now: {stepLabel(s.snapshot, s.scenes)}</div>}
               </div>
             </div>
           </Card>
@@ -119,4 +119,12 @@ export function Dashboard() {
 function greeting() {
   const h = new Date().getHours();
   return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+}
+
+/** What a mix is playing right now: the step scene's name, or the inline effect's name. */
+export function stepLabel(snap: { mixStepSceneId: string | null; softwareEffect: { type: string } | null }, scenes: { id: string; name: string }[]): string {
+  const id = snap.mixStepSceneId;
+  if (!id) return '';
+  if (id.startsWith('step:')) return SOFTWARE_EFFECTS.find((e) => e.type === snap.softwareEffect?.type)?.name ?? `Step ${+id.slice(5) + 1}`;
+  return scenes.find((x) => x.id === id)?.name ?? '';
 }

@@ -9,7 +9,7 @@ export interface AutomationRule {
   id: string;
   name: string;
   enabled: boolean;
-  /** Executable name, case-insensitive, e.g. "Cyberpunk2077.exe". Supports * wildcards. */
+  /** Executable name, case-insensitive, e.g. "Timberborn.exe". Supports * wildcards and alternatives: "a.exe|b*.exe". */
   process: string;
   /** 'running' = any time the process exists; 'foreground' = only while its window is focused. */
   trigger: RuleTrigger;
@@ -38,14 +38,19 @@ export type AutomationDecision =
   | { type: 'restore'; sceneId: string | null }
   | { type: 'none' };
 
+/** Default rules: the user's own games (exe names checked in their Steam library on 2026-10-31). */
 export const EXAMPLE_RULES: Omit<AutomationRule, 'id'>[] = [
-  { name: 'Cyberpunk 2077', enabled: true, process: 'Cyberpunk2077.exe', trigger: 'running', sceneId: 'cyberpunk', priority: 90, cooldownSec: 10, restorePrevious: true },
-  { name: 'Fortnite', enabled: true, process: 'FortniteClient-Win64-Shipping.exe', trigger: 'running', sceneId: 'gaming', priority: 80, cooldownSec: 10, restorePrevious: true },
   { name: 'Satisfactory', enabled: true, process: 'FactoryGame*.exe', trigger: 'running', sceneId: 'gaming', priority: 80, cooldownSec: 10, restorePrevious: true },
   { name: 'Timberborn', enabled: true, process: 'Timberborn.exe', trigger: 'running', sceneId: 'relax', priority: 80, cooldownSec: 10, restorePrevious: true },
-  { name: 'VS Code', enabled: false, process: 'Code.exe', trigger: 'foreground', sceneId: 'work', priority: 20, cooldownSec: 30, restorePrevious: true },
-  { name: 'Chrome', enabled: false, process: 'chrome.exe', trigger: 'foreground', sceneId: 'relax', priority: 10, cooldownSec: 30, restorePrevious: true },
+  { name: 'Over the Hill', enabled: true, process: 'over the hill.exe', trigger: 'running', sceneId: 'sunset', priority: 80, cooldownSec: 10, restorePrevious: true },
+  { name: 'Stumble Guys', enabled: true, process: 'Stumble Guys.exe', trigger: 'running', sceneId: 'gaming', priority: 80, cooldownSec: 10, restorePrevious: true },
+  // Not installed when checked: names follow the usual Unreal pattern and may need a fix (Automation → pick a running app).
+  { name: 'Chained Together', enabled: true, process: 'ChainedTogether*.exe|Chained*Shipping.exe', trigger: 'running', sceneId: 'horror', priority: 80, cooldownSec: 10, restorePrevious: true },
+  { name: 'RV There Yet?', enabled: true, process: 'RVThereYet*.exe|RV*Shipping.exe', trigger: 'running', sceneId: 'gaming', priority: 80, cooldownSec: 10, restorePrevious: true },
 ];
+
+/** Example rules shipped in 0.0.1–0.0.3 for apps the user does not want. */
+export const RETIRED_RULE_PROCESSES = ['cyberpunk2077.exe', 'fortniteclient-win64-shipping.exe', 'code.exe', 'chrome.exe'];
 
 function globToRegex(glob: string): RegExp {
   const esc = glob.trim().toLowerCase().replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
@@ -55,9 +60,10 @@ function globToRegex(glob: string): RegExp {
 export function ruleMatches(rule: AutomationRule, snap: ActivitySnapshot): boolean {
   if (!rule.enabled || !rule.process.trim()) return false;
   if (rule.process.trim().toLowerCase() === 'media:playing') return snap.mediaPlaying === true;
-  const re = globToRegex(rule.process);
-  if (rule.trigger === 'foreground') return snap.foreground != null && re.test(snap.foreground.toLowerCase());
-  return snap.processes.some((p) => re.test(p.toLowerCase()));
+  const res = rule.process.split('|').map((p) => p.trim()).filter(Boolean).map(globToRegex);
+  const hit = (name: string) => res.some((re) => re.test(name.toLowerCase()));
+  if (rule.trigger === 'foreground') return snap.foreground != null && hit(snap.foreground);
+  return snap.processes.some(hit);
 }
 
 /** Of several matching rules, the highest priority wins; ties go to foreground rules, then to list order. */

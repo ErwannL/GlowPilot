@@ -6,6 +6,12 @@ import { Badge, Button, Card, Field, inputCls, Modal, PageHeader, Toggle } from 
 export function Automation() {
   const s = useStore((x) => x);
   const [edit, setEdit] = useState<AutomationRule | null>(null);
+  const [steam, setSteam] = useState<{ appid: string; name: string; exes: string[]; pick: boolean; sceneId: string }[] | null>(null);
+  const openSteam = async () => {
+    const games = (await desktop?.steamGames?.()) ?? [];
+    const has = (g: { name: string; exes: string[] }) => s.rules.some((r) => r.name.toLowerCase() === g.name.toLowerCase() || g.exes.some((e) => r.process.toLowerCase().split('|').map((x) => x.trim()).includes(e.toLowerCase())));
+    setSteam(games.map((g) => ({ ...g, pick: !has(g), sceneId: 'gaming' })));
+  };
   const conflicts = findConflicts(s.rules);
   const canDetect = !!desktop || s.mode === 'remote';
   const overridden = store.automation.overrideUntil > Date.now();
@@ -16,7 +22,7 @@ export function Automation() {
   return (
     <div className="space-y-5">
       <PageHeader title="Automation" subtitle="Lights that follow what you do on your PC."
-        action={<Button variant="primary" onClick={() => setEdit({ id: newId('rule'), name: '', enabled: true, process: s.foreground ?? '', trigger: 'running', sceneId: 'gaming', priority: 50, cooldownSec: 10, restorePrevious: true })}>+ New rule</Button>} />
+        action={<div className="flex flex-wrap gap-2">{desktop?.steamGames && <Button onClick={() => void openSteam()}>🎮 Add my Steam games</Button>}<Button variant="primary" onClick={() => setEdit({ id: newId('rule'), name: '', enabled: true, process: s.foreground ?? '', trigger: 'running', sceneId: 'gaming', priority: 50, cooldownSec: 10, restorePrevious: true })}>+ New rule</Button></div>} />
 
       {!canDetect && (
         <Card className="border-orange-400/20">
@@ -46,7 +52,7 @@ export function Automation() {
               <div className="min-w-0 flex-1">
                 <div className="font-semibold">{r.name || r.process}</div>
                 <div className="text-sm text-white/50">
-                  IF <code className="text-violet-200">{r.process}</code> {r.trigger === 'foreground' ? 'is focused' : 'is running'} THEN {scene?.icon} {scene?.name ?? 'missing scene'}
+                  IF <code className="text-violet-200">{r.process.split('|').join(' or ')}</code> {r.trigger === 'foreground' ? 'is focused' : 'is running'} THEN {scene?.icon} {scene?.name ?? 'missing scene'}
                   {r.targetGroupId ? ` on ${s.groups.find((g) => g.id === r.targetGroupId)?.name ?? 'missing group'}` : ''}
                 </div>
                 <div className="mt-1 flex flex-wrap gap-1.5">
@@ -65,6 +71,35 @@ export function Automation() {
       <Card title="Media & streaming">
         <p className="text-sm text-white/55">A running browser does not mean a film is playing, so GlowPilot never assumes it. Use the <b>Cinema</b> scene manually or from a schedule. GlowPilot Desktop also reports when Windows media playback starts (Windows media session), which you can use with a <code>media:playing</code> rule.</p>
       </Card>
+
+      {steam && (
+        <Modal open onClose={() => setSteam(null)} title="Your Steam games">
+          {steam.length === 0 ? <p className="text-sm text-white/55">No installed Steam game found.</p> : (
+            <div className="space-y-2">
+              <p className="text-sm text-white/55">Found in your Steam library. Each checked game gets a rule: <i>while it runs, play this scene</i>. Games that already have a rule are unchecked.</p>
+              {steam.map((g, i) => (
+                <div key={g.appid} className="flex flex-wrap items-center gap-3 rounded-xl bg-white/5 px-3 py-2">
+                  <input type="checkbox" checked={g.pick} onChange={(e) => setSteam(steam.map((x, j) => (j === i ? { ...x, pick: e.target.checked } : x)))} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium">{g.name}</div>
+                    <div className="truncate font-mono text-[11px] text-white/40">{g.exes.join(' | ')}</div>
+                  </div>
+                  <select className={inputCls.replace('w-full', 'w-40') + ' py-1.5'} value={g.sceneId} onChange={(e) => setSteam(steam.map((x, j) => (j === i ? { ...x, sceneId: e.target.value } : x)))}>
+                    {s.scenes.map((sc) => <option key={sc.id} value={sc.id}>{sc.icon} {sc.name}</option>)}
+                  </select>
+                </div>
+              ))}
+              <div className="flex justify-end pt-2">
+                <Button variant="primary" disabled={!steam.some((g) => g.pick)} onClick={() => {
+                  const added = steam.filter((g) => g.pick).map((g): AutomationRule => ({ id: newId('rule'), name: g.name, enabled: true, process: g.exes.join('|'), trigger: 'running', sceneId: g.sceneId, priority: 80, cooldownSec: 10, restorePrevious: true }));
+                  store.saveRules([...s.rules, ...added]);
+                  setSteam(null);
+                }}>Add {steam.filter((g) => g.pick).length} rule(s)</Button>
+              </div>
+            </div>
+          )}
+        </Modal>
+      )}
 
       {edit && (
         <Modal open onClose={() => setEdit(null)} title="Automation rule">
