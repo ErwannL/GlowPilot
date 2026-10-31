@@ -1,0 +1,97 @@
+import { useState } from 'react';
+import { findConflicts, newId, type AutomationRule } from '@glowpilot/core';
+import { desktop, store, useStore } from '../store';
+import { Badge, Button, Card, Field, inputCls, Modal, PageHeader, Toggle } from '../components/ui';
+
+export function Automation() {
+  const s = useStore((x) => x);
+  const [edit, setEdit] = useState<AutomationRule | null>(null);
+  const conflicts = findConflicts(s.rules);
+  const canDetect = !!desktop || s.mode === 'remote';
+  const overridden = store.automation.overrideUntil > Date.now();
+  const save = (r: AutomationRule) => store.saveRules(s.rules.some((x) => x.id === r.id) ? s.rules.map((x) => (x.id === r.id ? r : x)) : [...s.rules, r]);
+
+  return (
+    <div className="space-y-5">
+      <PageHeader title="Automation" subtitle="Lights that follow what you do on your PC."
+        action={<Button variant="primary" onClick={() => setEdit({ id: newId('rule'), name: '', enabled: true, process: s.foreground ?? '', trigger: 'running', sceneId: 'gaming', priority: 50, cooldownSec: 10, restorePrevious: true })}>+ New rule</Button>} />
+
+      {!canDetect && (
+        <Card className="border-orange-400/20">
+          <div className="font-semibold">App detection needs GlowPilot Desktop</div>
+          <p className="mt-1 text-sm text-white/55">Browsers cannot see which programs run on your computer. Install GlowPilot Desktop on Windows, or connect to it from Settings. Rules you create here sync to it.</p>
+        </Card>
+      )}
+
+      <Card title="Live activity" action={<div className="flex items-center gap-3 text-sm text-white/60">Automation <Toggle on={s.settings.automationEnabled} onChange={(v) => store.updateSettings({ automationEnabled: v })} /></div>}>
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <span className="text-white/50">Focused app:</span>
+          <code className="rounded-lg bg-white/5 px-2 py-1">{s.foreground ?? '—'}</code>
+          {s.foreground && <Button variant="soft" onClick={() => setEdit({ id: newId('rule'), name: s.foreground!.replace(/\.exe$/i, ''), enabled: true, process: s.foreground!, trigger: 'foreground', sceneId: 'work', priority: 50, cooldownSec: 10, restorePrevious: true })}>Create rule for this app</Button>}
+          {overridden && <span className="ml-auto flex items-center gap-2"><Badge tone="orange">Paused by manual change</Badge><Button onClick={() => store.clearOverride()}>Resume</Button></span>}
+        </div>
+        <p className="mt-3 text-xs text-white/40">When you pick a scene by hand while a rule is active, automation pauses for {s.settings.overrideMinutes} minutes (change in Settings).</p>
+      </Card>
+
+      <div className="space-y-3">
+        {s.rules.map((r) => {
+          const scene = s.scenes.find((x) => x.id === r.sceneId);
+          const conflict = conflicts.find((c) => c.ruleId === r.id);
+          return (
+            <div key={r.id} className={`glass gp-in flex flex-wrap items-center gap-4 rounded-3xl p-4 ${s.snapshot.activeRule === r.id ? 'ring-2 ring-violet-400/60' : ''}`}>
+              <Toggle on={r.enabled} onChange={(enabled) => save({ ...r, enabled })} />
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold">{r.name || r.process}</div>
+                <div className="text-sm text-white/50">
+                  IF <code className="text-violet-200">{r.process}</code> {r.trigger === 'foreground' ? 'is focused' : 'is running'} THEN {scene?.icon} {scene?.name ?? 'missing scene'}
+                </div>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  <Badge>Priority {r.priority}</Badge><Badge>Cooldown {r.cooldownSec}s</Badge>
+                  {r.restorePrevious && <Badge tone="blue">Restores previous</Badge>}
+                  {conflict && <Badge tone="orange">Never wins: same app as another rule</Badge>}
+                  {s.snapshot.activeRule === r.id && <Badge tone="green">Active now</Badge>}
+                </div>
+              </div>
+              <Button onClick={() => setEdit(r)}>Edit</Button>
+            </div>
+          );
+        })}
+      </div>
+
+      <Card title="Media & streaming">
+        <p className="text-sm text-white/55">A running browser does not mean a film is playing, so GlowPilot never assumes it. Use the <b>Cinema</b> scene manually or from a schedule. GlowPilot Desktop also reports when Windows media playback starts (Windows media session), which you can use with a <code>media:playing</code> rule.</p>
+      </Card>
+
+      {edit && (
+        <Modal open onClose={() => setEdit(null)} title="Automation rule">
+          <div className="space-y-4">
+            <Field label="Name"><input className={inputCls} value={edit.name} placeholder="Cyberpunk 2077" onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
+            <Field label="Program (executable)" hint="Exact .exe name from Task Manager → Details. Wildcards allowed: steam*.exe. Use media:playing for media playback.">
+              <input className={inputCls + ' font-mono'} value={edit.process} placeholder="Cyberpunk2077.exe" onChange={(e) => setEdit({ ...edit, process: e.target.value })} />
+            </Field>
+            <Field label="When">
+              <select className={inputCls} value={edit.trigger} onChange={(e) => setEdit({ ...edit, trigger: e.target.value as AutomationRule['trigger'] })}>
+                <option value="running">The program is running (games)</option>
+                <option value="foreground">Its window is in front (apps)</option>
+              </select>
+            </Field>
+            <Field label="Activate scene">
+              <select className={inputCls} value={edit.sceneId} onChange={(e) => setEdit({ ...edit, sceneId: e.target.value })}>
+                {s.scenes.map((sc) => <option key={sc.id} value={sc.id}>{sc.icon} {sc.name}</option>)}
+              </select>
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Priority (higher wins)"><input type="number" className={inputCls} value={edit.priority} onChange={(e) => setEdit({ ...edit, priority: +e.target.value })} /></Field>
+              <Field label="Cooldown (s)"><input type="number" min={0} className={inputCls} value={edit.cooldownSec} onChange={(e) => setEdit({ ...edit, cooldownSec: Math.max(0, +e.target.value) })} /></Field>
+            </div>
+            <label className="flex items-center justify-between text-sm">Restore previous scene afterwards <Toggle on={edit.restorePrevious} onChange={(restorePrevious) => setEdit({ ...edit, restorePrevious })} /></label>
+            <div className="flex justify-between pt-2">
+              <Button variant="danger" onClick={() => { store.saveRules(s.rules.filter((x) => x.id !== edit.id)); setEdit(null); }}>Delete</Button>
+              <Button variant="primary" disabled={!edit.process.trim()} onClick={() => { save({ ...edit, name: edit.name.trim() || edit.process }); setEdit(null); }}>Save rule</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}

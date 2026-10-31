@@ -1,0 +1,129 @@
+// Local API for phones and browsers on the same network.
+// - Serves the built PWA over HTTP and a WebSocket JSON API on the same port.
+// - Only private/loopback addresses are accepted; everything else is dropped.
+// - Clients must pair with a 6-digit code once, then authenticate with a random token.
+const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const os = require('node:os');
+const { WebSocketServer } = require('ws');
+
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png' };
+
+function isPrivateAddress(addr) {
+  const a = String(addr || '').replace(/^::ffff:/, '');
+  return a === '::1' || a === '127.0.0.1' || /^10\./.test(a) || /^192\.168\./.test(a) || /^172\.(1[6-9]|2\d|3[01])\./.test(a)
+    || /^169\.254\./.test(a) || /^f[cd][0-9a-f]{2}:/i.test(a) || /^fe80:/i.test(a);
+}
+
+function lanAddresses() {
+  return Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === 'IPv4' && !i.internal && isPrivateAddress(i.address)).map((i) => i.address);
+}
+
+class LocalApiServer {
+  /**
+   * @param {{ port: number, staticDir: string, storeFile: string, onMessage: (clientName: string, msg: any) => void }} opts
+   */
+  constructor(opts) {
+    this.opts = opts;
+    this.code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+    this.tokens = this.loadTokens();
+    this.sockets = new Set();
+    this.lastState = null;
+    this.failedPairs = new Map();
+  }
+
+  loadTokens() {
+    try { return JSON.parse(fs.readFileSync(this.opts.storeFile, 'utf8')); } catch { return {}; }
+  }
+  saveTokens() {
+    fs.mkdirSync(path.dirname(this.opts.storeFile), { recursive: true });
+    fs.writeFileSync(this.opts.storeFile, JSON.stringify(this.tokens));
+  }
+
+  pairingInfo() {
+    return { code: this.code, addresses: lanAddresses(), port: this.opts.port, clients: Object.values(this.tokens).map((t) => t.name) };
+  }
+
+  revokeAll() {
+    this.tokens = {};
+    this.saveTokens();
+    for (const ws of this.sockets) ws.close(4001, 'revoked');
+    this.code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+  }
+
+  start() {
+    const server = http.createServer((req, res) => {
+      if (!isPrivateAddress(req.socket.remoteAddress)) { req.socket.destroy(); return; }
+      const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
+      const file = path.normalize(path.join(this.opts.staticDir, urlPath === '/' ? 'index.html' : urlPath));
+      if (!file.startsWith(path.normalize(this.opts.staticDir))) { res.writeHead(403).end(); return; }
+      fs.readFile(file, (err, data) => {
+        if (err) {
+          fs.readFile(path.join(this.opts.staticDir, 'index.html'), (e2, html) => (e2 ? res.writeHead(404).end('Build the web app first: npm run build') : res.writeHead(200, { 'content-type': 'text/html' }).end(html)));
+          return;
+        }
+        res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream', 'x-content-type-options': 'nosniff' }).end(data);
+      });
+    });
+
+    const wss = new WebSocketServer({ server, maxPayload: 512 * 1024 });
+    wss.on('connection', (ws, req) => {
+      const ip = req.socket.remoteAddress;
+      if (!isPrivateAddress(ip)) { ws.terminate(); return; }
+      let client = null; // { token, name } once authenticated
+      this.sockets.add(ws);
+      ws.on('close', () => this.sockets.delete(ws));
+      ws.on('message', (raw) => {
+        let msg;
+        try { msg = JSON.parse(String(raw)); } catch { return; }
+        if (msg.t === 'pair') {
+          const fails = this.failedPairs.get(ip) || 0;
+          if (fails >= 5) return send(ws, { t: 'denied', reason: 'Too many wrong codes. Restart GlowPilot Desktop to get a new code.' });
+          if (String(msg.code) !== this.code) {
+            this.failedPairs.set(ip, fails + 1);
+            return send(ws, { t: 'denied', reason: 'Wrong pairing code' });
+          }
+          const token = crypto.randomBytes(24).toString('hex');
+          this.tokens[token] = { name: String(msg.clientName || 'Device').slice(0, 40), pairedAt: Date.now() };
+          this.saveTokens();
+          this.code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0'); // single-use code
+          return send(ws, { t: 'paired', token });
+        }
+        if (msg.t === 'auth') {
+          const entry = this.tokens[msg.token];
+          if (!entry) return send(ws, { t: 'denied', reason: 'Unknown token, pair again' });
+          client = { token: msg.token, name: entry.name };
+          ws.client = client;
+          send(ws, { t: 'authed' });
+          if (this.lastState) send(ws, { t: 'state', state: this.lastState });
+          return;
+        }
+        if (!client) return send(ws, { t: 'denied', reason: 'Not authenticated' });
+        if (!this.tokens[client.token]) return ws.close(4001, 'revoked');
+        this.opts.onMessage(client.name, msg);
+      });
+    });
+
+    server.listen(this.opts.port, '0.0.0.0');
+    this.server = server;
+    return server;
+  }
+
+  broadcastState(state) {
+    this.lastState = state;
+    const data = JSON.stringify({ t: 'state', state });
+    for (const ws of this.sockets) if (ws.client && ws.readyState === 1) ws.send(data);
+  }
+
+  stop() {
+    this.server?.close();
+  }
+}
+
+function send(ws, m) {
+  if (ws.readyState === 1) ws.send(JSON.stringify(m));
+}
+
+module.exports = { LocalApiServer, isPrivateAddress, lanAddresses };

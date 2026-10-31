@@ -1,0 +1,17 @@
+{
+  "name": "glowpilot",
+  "private": true,
+  "version": "0.0.1",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "npm run test -w @glowpilot/core && npm run test -w @glowpilot/desktop",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "dev": "npm run dev -w @glowpilot/web",
+    "build": "npm run build -w @glowpilot/web",
+    "desktop": "npm run build && npm run start -w @glowpilot/desktop",
+    "hw:scan": "node apps/desktop/scripts/hint.cjs"
+  }
+}

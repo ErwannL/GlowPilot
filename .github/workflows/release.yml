@@ -1,0 +1,90 @@
+name: Release
+
+# Builds the Windows installer/portable .exe and the Android .apk.
+# - Push a tag like v0.0.1 → builds and publishes a GitHub Release with both files.
+# - Run manually (Actions → Release → Run workflow) → builds and uploads them as workflow artifacts.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      # electron-builder needs the desktop app's runtime deps (ws) next to it, not hoisted to the root.
+      - name: Install desktop dependencies standalone
+        working-directory: apps/desktop
+        run: npm install --no-workspaces --no-package-lock
+      - name: Build exe
+        working-directory: apps/desktop
+        run: npx electron-builder --win --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GlowPilot-windows
+          path: apps/desktop/release/*.exe
+
+  android:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - uses: android-actions/setup-android@v3
+      - run: npm ci
+      - run: npm run build
+      - name: Sync web app into Android project
+        working-directory: apps/web
+        run: npx cap sync android
+      - name: Build APK
+        working-directory: apps/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+          mv app/build/outputs/apk/debug/app-debug.apk "GlowPilot-${GITHUB_REF_NAME#v}.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GlowPilot-android
+          path: apps/android/GlowPilot-*.apk
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: GlowPilot ${{ github.ref_name }}
+          files: dist/*
+          generate_release_notes: true
+          prerelease: ${{ startsWith(github.ref_name, 'v0.') }}
+          body: |
+            **Windows:** `GlowPilot-Setup-*.exe` (installer) or `GlowPilot-Portable-*.exe` (no install).
+            **Android:** `GlowPilot-*.apk` is debug-signed; allow installing from unknown sources.
+            The builds are not code-signed, so Windows SmartScreen may warn on first launch ("More info" → "Run anyway").

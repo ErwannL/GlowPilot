@@ -1,0 +1,66 @@
+{
+  "name": "@glowpilot/desktop",
+  "version": "0.0.1",
+  "private": true,
+  "description": "GlowPilot for Windows: BLE controller, app automation and local API",
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/server.test.cjs",
+    "dist": "electron-builder --win --publish never"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "author": "Erwann Laplante",
+  "build": {
+    "appId": "app.glowpilot.desktop",
+    "productName": "GlowPilot",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "src/activity.ps1"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "web"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "GlowPilot-Setup-${version}.exe"
+    },
+    "portable": {
+      "artifactName": "GlowPilot-Portable-${version}.exe"
+    }
+  }
+}

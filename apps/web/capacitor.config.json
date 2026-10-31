@@ -1,0 +1,22 @@
+{
+  "appId": "app.glowpilot",
+  "appName": "GlowPilot",
+  "webDir": "dist",
+  "android": {
+    "path": "../android",
+    "allowMixedContent": true
+  },
+  "plugins": {
+    "BluetoothLe": {
+      "displayStrings": {
+        "scanning": "Looking for lights\u00e2\u20ac\u00a6",
+        "cancel": "Cancel",
+        "availableDevices": "Nearby controllers",
+        "noDeviceFound": "No controller found"
+      }
+    }
+  },
+  "server": {
+    "androidScheme": "http"
+  }
+}
