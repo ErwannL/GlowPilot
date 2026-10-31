@@ -25,6 +25,9 @@ export interface DesktopBridge {
   getPairing(): Promise<{ code: string; addresses: string[]; port: number; clients: string[] }>;
   revokeClients(): Promise<void>;
   setLaunchAtLogin(on: boolean): void;
+  launchAtLogin?(): Promise<boolean>;
+  /** Called before GlowPilot Desktop really quits; the returned promise is awaited (max 1.5 s). */
+  onPrepareQuit?(cb: () => Promise<void>): void;
   onUpdate?(cb: (info: UpdateInfo) => void): void;
   installUpdate?(): void;
   checkForUpdates?(): void;
@@ -226,12 +229,53 @@ class Light {
       this.sim = transport.state;
       transport.onState((s) => { this.sim = s; this.onChange(); });
     }
-    this.controller.on('status', (s) => { this.status = s; if (s === 'connected') this.error = null; this.onChange(); });
+    this.controller.on('status', (s) => {
+      this.status = s;
+      if (s === 'connected') {
+        this.error = null;
+        if (!this.restored) {
+          this.restored = true;
+          this.restoreLook();
+        }
+      }
+      this.onChange();
+    });
     this.controller.on('error', (e) => { this.error = e; this.onChange(); });
     this.controller.on('ack', (b) => onLog('ack', b));
     const write = transport.write.bind(transport);
     transport.write = async (b) => { await write(b); onLog('tx', b); };
-    this.engine.on('snapshot', (snap) => { this.snapshot = snap; save(`light.${device.id}`, snap.light); this.onChange(); });
+    this.engine.on('snapshot', (snap) => {
+      this.snapshot = snap;
+      save(`light.${device.id}`, snap.light);
+      // What the light is showing, so it comes back after a restart (scene, mix or GlowPilot effect).
+      save(`look.${device.id}`, { sceneId: snap.activeSceneId, effect: snap.softwareEffect, ramp: snap.ramp?.kind ?? null });
+      this.onChange();
+    });
+  }
+
+  private restored = false;
+
+  /**
+   * First connection after start: bring back the scene/effect that was running. The controller itself
+   * restores its last static colour or built-in effect; GlowPilot-computed animations need the app.
+   */
+  private restoreLook() {
+    const look = load<{ sceneId: string | null; effect: EngineSnapshot['softwareEffect']; ramp: string | null } | null>(`look.${this.device.id}`, null);
+    if (!look || !this.controller.state.on || look.ramp === 'alarm') return;
+    if (look.sceneId && this.engine.scenes.some((x) => x.id === look.sceneId)) this.engine.exec({ type: 'scene', sceneId: look.sceneId, source: 'schedule' });
+    else if (look.effect) this.engine.exec({ type: 'softwareEffect', effect: look.effect });
+  }
+
+  /** Before quitting: replace a running GlowPilot animation with its main colour so the strip doesn't freeze on a random frame. */
+  async settle() {
+    const fx = this.engine.effects.current;
+    if (this.status !== 'connected' || !fx || fx.type === 'static' || !this.controller.state.on) return;
+    const look = this.snapshot;
+    this.engine.effects.stop();
+    this.controller.renderFrame(fx.colors[0]);
+    await this.controller.idle();
+    // Keep the saved look so the animation resumes on next start.
+    save(`look.${this.device.id}`, { sceneId: look.activeSceneId, effect: look.softwareEffect, ramp: null });
   }
 
   get name() { return this.device.alias || this.device.name; }
@@ -678,6 +722,10 @@ class Store {
 
   private setupDesktop() {
     if (!desktop) return;
+    desktop.onPrepareQuit?.(async () => {
+      this.stopMusic();
+      await Promise.all(this.lights.map((l) => l.settle()));
+    });
     desktop.onUpdate?.((update) => this.set({ update }));
     void desktop.updateStatus?.().then((update) => this.set({ update }));
     desktop.onActivity((a) => {

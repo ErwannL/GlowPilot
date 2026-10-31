@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('glowpilotDesktop', {
   getPairing: () => ipcRenderer.invoke('pairing'),
   revokeClients: () => ipcRenderer.invoke('revoke'),
   setLaunchAtLogin: (on) => ipcRenderer.send('login-item', on),
+  launchAtLogin: () => ipcRenderer.invoke('login-item-state'),
+  onPrepareQuit: (cb) => ipcRenderer.on('prepare-quit', async () => { try { await cb(); } finally { ipcRenderer.send('quit-ready'); } }),
   onUpdate: (cb) => ipcRenderer.on('update', (_e, info) => cb(info)),
   installUpdate: () => ipcRenderer.send('update-install'),
   checkForUpdates: () => ipcRenderer.send('update-check'),

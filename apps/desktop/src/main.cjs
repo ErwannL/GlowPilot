@@ -46,7 +46,9 @@ function createWindow() {
     width: 1280, height: 840, minWidth: 380, minHeight: 600,
     backgroundColor: '#0b0a14', title: 'GlowPilot', show: false, autoHideMenuBar: true,
     icon: path.join(WEB_DIST, 'icon.svg'),
-    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true },
+    // backgroundThrottling off: when the window is hidden in the tray, Chromium would otherwise slow timers
+    // to ~1/minute, which froze effects, scene mixes, the alarm and schedules as soon as the window closed.
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, backgroundThrottling: false },
   });
   const startHidden = process.argv.includes('--hidden') || consumeRelaunchHidden();
   win.once('ready-to-show', () => { if (!startHidden) win.show(); });
@@ -128,10 +130,37 @@ const watcher = new ActivityWatcher((snap) => win?.webContents.send('activity', 
 app.whenReady().then(() => {
   createWindow();
   createTray();
+  enableAutostartOnce();
   try { api.start(); } catch (e) { console.error('Local API failed to start', e); }
   watcher.start();
   setupAutoUpdate(() => win, () => { quitting = true; });
 });
 
-app.on('before-quit', () => { quitting = true; watcher.stop(); api.stop(); });
+// On a real quit, let the renderer leave every light on a steady colour (an animation computed by
+// GlowPilot would otherwise freeze on whatever frame it was showing, e.g. black in a strobe).
+let quitPrepared = false;
+app.on('before-quit', (e) => {
+  quitting = true;
+  if (!quitPrepared && win && !win.isDestroyed()) {
+    e.preventDefault();
+    quitPrepared = true;
+    const done = () => app.quit();
+    ipcMain.once('quit-ready', done);
+    win.webContents.send('prepare-quit');
+    setTimeout(done, 1500);
+    return;
+  }
+  watcher.stop();
+  api.stop();
+});
+
+// First launch: start with Windows, hidden in the tray, so lights, automations and the alarm keep working.
+function enableAutostartOnce() {
+  const flag = path.join(DATA, 'autostart-default-set');
+  if (fs.existsSync(flag) || !app.isPackaged) return;
+  app.setLoginItemSettings({ openAtLogin: true, args: ['--hidden'] });
+  fs.mkdirSync(DATA, { recursive: true });
+  fs.writeFileSync(flag, '1');
+}
+ipcMain.handle('login-item-state', () => app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin);
 app.on('window-all-closed', () => { /* stay in tray */ });

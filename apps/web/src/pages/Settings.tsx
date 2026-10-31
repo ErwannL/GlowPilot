@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { desktop, store, useStore, type Mode, type UpdateInfo } from '../store';
 import { WebBluetoothTransport } from '../transports/webBluetooth';
 import { CapacitorBleTransport } from '../transports/capacitor';
-import { Badge, Button, Card, Field, inputCls, PageHeader } from '../components/ui';
+import { Badge, Button, Card, Field, inputCls, PageHeader, Toggle } from '../components/ui';
 import { APP_VERSION } from '../components/UpdateBanner';
 
 export function SettingsPage() {
@@ -96,7 +96,7 @@ export function SettingsPage() {
             </select>
           </Field>
         </div>
-        {desktop && <div className="mt-4 flex gap-2"><Button onClick={() => desktop!.setLaunchAtLogin(true)}>Start with Windows</Button><Button onClick={() => desktop!.setLaunchAtLogin(false)}>Don't start with Windows</Button></div>}
+        {desktop && <AutostartToggle />}
       </Card>
 
       <Card title="About">
@@ -135,3 +135,18 @@ function updateText(u: UIStateUpdate): string {
   }
 }
 type UIStateUpdate = UpdateInfo | null;
+
+/** GlowPilot keeps lights, automations and the alarm running only while it runs: start it with Windows, hidden in the tray. */
+function AutostartToggle() {
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => { void desktop?.launchAtLogin?.().then(setOn); }, []);
+  return (
+    <label className="mt-4 flex items-center justify-between gap-4 rounded-2xl bg-white/5 p-3 text-sm">
+      <span>
+        <b>Start with Windows</b> (hidden in the tray)
+        <span className="block text-xs text-white/45">Animations, scene mixes, game rules and the alarm need GlowPilot running. Closing the window keeps it running in the tray; Quit stops it and leaves your lights on a steady colour.</span>
+      </span>
+      <Toggle on={!!on} onChange={(v) => { desktop?.setLaunchAtLogin(v); setOn(v); }} />
+    </label>
+  );
+}
