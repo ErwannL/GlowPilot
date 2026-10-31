@@ -83,7 +83,7 @@ jobs:
           name: GlowPilot ${{ github.ref_name }}
           files: dist/*
           generate_release_notes: true
-          prerelease: ${{ startsWith(github.ref_name, 'v0.') }}
+          make_latest: true
           body: |
             **Windows:** `GlowPilot-Setup-*.exe` (installer) or `GlowPilot-Portable-*.exe` (no install).
             **Android:** `GlowPilot-*.apk` is debug-signed; allow installing from unknown sources.
