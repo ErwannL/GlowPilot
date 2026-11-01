@@ -433,3 +433,14 @@ describe('v0.0.8: wake the PC for alarms', () => {
     expect(once[0].once).toBe('2026-11-02T05:57:00');
   });
 });
+
+describe('v0.0.9: phone alarm sync', () => {
+  it('dated one-shot schedules run once at that moment and wake the PC before', () => {
+    const at = new Date(2026, 10, 3, 6, 15).getTime();
+    const s: Schedule = { id: 'phone-alarm', name: 'Phone alarm', enabled: true, time: '', days: [], onceAt: at, action: { type: 'alarm', minutes: 45, color: '#ff8a30' } };
+    expect(nextRun(s, new Date(2026, 10, 1))?.getTime()).toBe(at);
+    expect(nextRun(s, new Date(2026, 10, 4))).toBeNull();
+    expect(nextRun({ ...s, firedAt: 1 }, new Date(2026, 10, 1))).toBeNull();
+    expect(wakeTimes([s], new Date(2026, 10, 1))[0].once).toBe('2026-11-03T06:12:00');
+  });
+});

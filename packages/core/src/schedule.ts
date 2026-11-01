@@ -27,6 +27,8 @@ export interface Schedule {
   firedAt?: number;
   /** Group of lights it applies to; undefined/null = all lights. */
   targetGroupId?: string | null;
+  /** One-shot at an exact moment (ms), e.g. synced from the phone's alarm clock. Overrides time/days. */
+  onceAt?: number;
 }
 
 export const parseTime = (t: string): { h: number; m: number } | null => {
@@ -41,6 +43,7 @@ export const leadMinutes = (a: ScheduleAction) => (a.type === 'sunrise' ? a.minu
 
 /** Next instant the schedule starts its action, strictly after `from`. */
 export function nextRun(s: Schedule, from: Date): Date | null {
+  if (s.onceAt) return s.enabled && !s.firedAt && s.onceAt > from.getTime() ? new Date(s.onceAt) : null;
   const t = parseTime(s.time);
   if (!t || !s.enabled) return null;
   const lead = leadMinutes(s.action);
@@ -79,6 +82,7 @@ export function describeSchedule(s: Schedule): string {
   const a = s.action;
   const what = a.type === 'on' ? 'Turn on' : a.type === 'off' ? 'Turn off' : a.type === 'scene' ? 'Activate scene'
     : a.type === 'sunrise' ? `Sunrise (${a.minutes} min)` : a.type === 'alarm' ? `Wake-up alarm (${a.minutes} min build-up)` : `Fade out (${a.minutes} min)`;
+  if (s.onceAt) return `${what} · ${new Date(s.onceAt).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`;
   return `${what} · ${s.time} · ${days}`;
 }
 
@@ -104,15 +108,16 @@ export function wakeTimes(list: Schedule[], now: Date, marginMin = 3): WakeTime[
   for (const s of list) {
     if (!s.enabled || s.action.type === 'off' || s.action.type === 'sunset') continue;
     const t = parseTime(s.time);
-    if (!t) continue;
+    if (!t && !s.onceAt) continue;
     const before = leadMinutes(s.action) + marginMin;
-    if (!s.days.length) {
+    if (!s.days.length || s.onceAt) {
       const n = nextRun(s, now);
       if (!n) continue;
       const w = new Date(n.getTime() - marginMin * 60_000);
       out.push({ id: s.id, name: s.name, time: '', days: [], once: `${w.getFullYear()}-${pad(w.getMonth() + 1)}-${pad(w.getDate())}T${pad(w.getHours())}:${pad(w.getMinutes())}:00` });
       continue;
     }
+    if (!t) continue;
     let mins = t.h * 60 + t.m - before;
     let shift = 0;
     while (mins < 0) { mins += 1440; shift -= 1; }

@@ -19,7 +19,9 @@ export type ClientMessage =
   | { t: 'saveRules'; rules: AutomationRule[] }
   | { t: 'saveSchedules'; schedules: Schedule[] }
   | { t: 'requestOwnership' }
-  | { t: 'releaseOwnership' };
+  | { t: 'releaseOwnership' }
+  /** From the phone (HTTP /api/phone-alarm): start a light alarm at `at` (ms), or remove it (null). */
+  | { t: 'phoneAlarm'; at: number | null; minutes: number; color: string };
 
 export interface RemoteState {
   snapshot: EngineSnapshot;
@@ -33,6 +35,12 @@ export interface RemoteState {
   owner: string;
   lights?: { id: string; name: string; status: ConnectionStatus }[];
   groups?: { id: string; name: string; icon: string; deviceIds: string[] }[];
+  /** True while any light runs a wake-up alarm (the phone checks this before taking over). */
+  alarmActive?: boolean;
+  /** Bluetooth names of the lights, so the phone can find them itself when the PC is asleep. */
+  lightNames?: string[];
+  /** Electron chooser ids (Bluetooth addresses on Windows) of the lights. */
+  lightAddresses?: string[];
 }
 
 export type ServerMessage =
@@ -44,5 +52,5 @@ export type ServerMessage =
 
 export function isClientMessage(v: unknown): v is ClientMessage {
   const t = (v as { t?: unknown })?.t;
-  return typeof t === 'string' && ['pair', 'auth', 'command', 'saveScenes', 'saveRules', 'saveSchedules', 'requestOwnership', 'releaseOwnership'].includes(t);
+  return typeof t === 'string' && ['pair', 'auth', 'command', 'saveScenes', 'saveRules', 'saveSchedules', 'requestOwnership', 'releaseOwnership', 'phoneAlarm'].includes(t);
 }

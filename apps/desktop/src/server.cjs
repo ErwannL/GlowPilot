@@ -57,6 +57,7 @@ class LocalApiServer {
     const server = http.createServer((req, res) => {
       if (!isPrivateAddress(req.socket.remoteAddress)) { req.socket.destroy(); return; }
       const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
+      if (urlPath.startsWith('/api/')) return this.handleApi(req, res, urlPath);
       const file = path.normalize(path.join(this.opts.staticDir, urlPath === '/' ? 'index.html' : urlPath));
       if (!file.startsWith(path.normalize(this.opts.staticDir))) { res.writeHead(403).end(); return; }
       fs.readFile(file, (err, data) => {
@@ -109,6 +110,40 @@ class LocalApiServer {
     server.listen(this.opts.port, '0.0.0.0');
     this.server = server;
     return server;
+  }
+
+  /**
+   * Small authenticated HTTP API for the Android alarm service (it runs without the web app):
+   * GET /api/status        → is the PC connected to the lights / running an alarm right now?
+   * POST /api/phone-alarm  → { at: ms | null, minutes, color }: light alarm before the phone's alarm clock.
+   */
+  handleApi(req, res, urlPath) {
+    const json = (code, body) => res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(body));
+    const token = /^Bearer\s+(\S+)$/.exec(req.headers.authorization || '')?.[1];
+    const client = token && this.tokens[token];
+    if (!client) return json(401, { error: 'pair this device first' });
+    if (req.method === 'GET' && urlPath === '/api/status') {
+      const st = this.lastState;
+      const connected = !!st && (st.lights?.length ? st.lights.some((l) => l.status === 'connected') : st.status === 'connected');
+      return json(200, { connected, alarmActive: !!st?.alarmActive });
+    }
+    if (req.method === 'POST' && urlPath === '/api/phone-alarm') {
+      let body = '';
+      req.on('data', (d) => { body += d; if (body.length > 4096) req.destroy(); });
+      req.on('end', () => {
+        try {
+          const b = JSON.parse(body);
+          const at = b.at == null ? null : Number(b.at);
+          if (at !== null && !(at > 0)) return json(400, { error: 'bad time' });
+          this.opts.onMessage(client.name, { t: 'phoneAlarm', at, minutes: Math.max(1, Math.min(180, Number(b.minutes) || 60)), color: /^#[0-9a-f]{6}$/i.test(b.color) ? b.color : '#ff8a30' });
+          json(200, { ok: true });
+        } catch {
+          json(400, { error: 'bad json' });
+        }
+      });
+      return;
+    }
+    return json(404, { error: 'unknown endpoint' });
   }
 
   broadcastState(state) {

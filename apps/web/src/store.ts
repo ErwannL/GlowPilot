@@ -8,6 +8,7 @@ import {
 } from '@glowpilot/core';
 import { WebBluetoothTransport } from './transports/webBluetooth';
 import { CapacitorBleTransport } from './transports/capacitor';
+import { alarmsForPhone, phoneAlarmsAvailable, syncPhoneAlarms } from './phoneAlarm';
 
 /** Bridge exposed by GlowPilot Desktop's preload script. Absent in a normal browser. */
 export interface DesktopBridge {
@@ -93,6 +94,10 @@ export interface Settings {
   remoteToken: string | null;
   clientName: string;
   overrideMinutes: number;
+  /** Android: start the wake-up lights N minutes before the phone's own alarm clock. */
+  phoneAlarmSync: boolean;
+  phoneAlarmMinutes: number;
+  phoneAlarmColor: string;
   automationEnabled: boolean;
   onboarded: boolean;
 }
@@ -127,6 +132,10 @@ export interface UIState {
    */
   paused: null | { reason: 'remote' | 'manual'; at: number };
   update: UpdateInfo | null;
+  /** What the PC reports about its lights (used by the phone's alarm to find them on its own). */
+  remoteLights: { names: string[]; addresses: string[] };
+  /** Android: next ring of the phone's alarm clock, and when the phone will run a light alarm. */
+  phoneAlarm: { systemAt: number | null; nextAt: number | null; exact: boolean } | null;
 }
 
 // --- persistence ---------------------------------------------------------------
@@ -214,6 +223,9 @@ const defaultSettings: Settings = {
   remoteToken: null,
   clientName: /Android/i.test(navigator.userAgent) ? 'Android phone' : 'Web browser',
   overrideMinutes: 30,
+  phoneAlarmSync: true,
+  phoneAlarmMinutes: 60,
+  phoneAlarmColor: '#ff8a30',
   automationEnabled: true,
   onboarded: false,
 };
@@ -367,6 +379,8 @@ class Store {
       btChooser: null,
       music: { running: false, level: 0 },
       update: null,
+      remoteLights: { names: [], addresses: [] },
+      phoneAlarm: null,
       paused: null,
     };
     this.automation.rules = this.state.rules;
@@ -374,6 +388,9 @@ class Store {
     this.setupDesktop();
     window.__glowpilotAutoconnect = () => void this.autoconnectNext();
     this.syncWakeTasks();
+    this.schedulePhoneSync();
+    // The phone's alarm clock may have changed while the app was in the background.
+    document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && this.schedulePhoneSync());
   }
 
   subscribe = (cb: () => void) => {
@@ -385,6 +402,32 @@ class Store {
     this.state = { ...this.state, ...p };
     this.listeners.forEach((l) => l());
     this.publishToDesktop();
+    if ('schedules' in p || 'settings' in p || 'remoteLights' in p || 'lights' in p) this.schedulePhoneSync();
+  }
+
+  private phoneSyncTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Android: keep the native alarm module in step with schedules, lights and the PC address. */
+  schedulePhoneSync() {
+    if (!phoneAlarmsAvailable() || this.phoneSyncTimer) return;
+    this.phoneSyncTimer = setTimeout(() => {
+      this.phoneSyncTimer = null;
+      const s = this.state;
+      const own = this.lights.map((l) => l.device);
+      void syncPhoneAlarms({
+        alarms: alarmsForPhone(s.schedules),
+        addresses: [...new Set([...own.map((d) => d.id).filter((id) => /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i.test(id)), ...s.remoteLights.addresses])],
+        names: [...new Set([...own.map((d) => d.name), ...s.remoteLights.names])],
+        desktopUrl: s.settings.remoteUrl.replace(/^ws/, 'http'),
+        token: s.settings.remoteToken ?? '',
+        syncPhoneAlarm: s.settings.phoneAlarmSync,
+        minutesBefore: s.settings.phoneAlarmMinutes,
+        color: s.settings.phoneAlarmColor,
+      }).then(async (r) => {
+        const { GlowAlarm } = await import('./phoneAlarm');
+        const sys = await GlowAlarm.nextSystemAlarm().catch(() => ({ at: null }));
+        this.set({ phoneAlarm: { systemAt: sys.at, nextAt: r?.nextAt ?? this.state.phoneAlarm?.nextAt ?? null, exact: r?.exact ?? this.state.phoneAlarm?.exact ?? true } });
+      });
+    }, 800);
   }
 
   /** Recompute the light views and the primary-light fields. */
@@ -861,6 +904,13 @@ class Store {
       else if (msg.t === 'saveScenes') this.saveScenes(msg.scenes);
       else if (msg.t === 'saveRules') this.saveRules(msg.rules);
       else if (msg.t === 'saveSchedules') this.saveSchedules(msg.schedules);
+      else if (msg.t === 'phoneAlarm') {
+        const rest = this.state.schedules.filter((x) => x.id !== 'phone-alarm');
+        this.saveSchedules(msg.at == null ? rest : [...rest, {
+          id: 'phone-alarm', name: `Phone alarm (${client})`, enabled: true, time: '', days: [], onceAt: msg.at,
+          action: { type: 'alarm', minutes: msg.minutes, color: msg.color },
+        }]);
+      }
       else if (msg.t === 'requestOwnership') {
         void this.disconnect();
         this.set({ owner: client });
@@ -887,6 +937,9 @@ class Store {
         snapshot: s.snapshot, status: s.status, deviceName: s.device ? s.device.alias || s.device.name : null,
         scenes: s.scenes, rules: s.rules, schedules: s.schedules, foreground: s.foreground, owner: s.owner,
         lights: s.lights.map((l) => ({ id: l.id, name: l.device.alias || l.device.name, status: l.status })),
+        alarmActive: this.lights.some((l) => l.snapshot.ramp?.kind === 'alarm'),
+        lightNames: this.lights.map((l) => l.device.name),
+        lightAddresses: this.lights.map((l) => l.device.chooserId).filter((x): x is string => !!x && /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i.test(x)),
         groups: s.groups.map((g) => ({ id: g.id, name: g.name, icon: g.icon, deviceIds: g.deviceIds })),
       });
     }, 50);
@@ -926,6 +979,7 @@ class Store {
           snapshot: r.snapshot, status: r.status, scenes: r.scenes, rules: r.rules, schedules: r.schedules, foreground: r.foreground, owner: r.owner,
           device: r.deviceName ? { id: 'remote', name: r.deviceName, driverId: 'elk', calibration: DEFAULT_CALIBRATION } : null,
           groups: (r.groups ?? []) as LightGroup[],
+          remoteLights: { names: r.lightNames ?? [], addresses: r.lightAddresses ?? [] },
           lights: (r.lights ?? []).map((l) => ({ id: l.id, device: { id: l.id, name: l.name, driverId: 'elk', calibration: DEFAULT_CALIBRATION }, status: l.status, snapshot: r.snapshot, sim: null, error: null })),
         });
       }

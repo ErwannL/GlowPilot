@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { desktop, store, useStore, type Mode, type UpdateInfo } from '../store';
 import { WebBluetoothTransport } from '../transports/webBluetooth';
 import { discoverDesktop } from '../discovery';
+import { GlowAlarm, phoneAlarmsAvailable } from '../phoneAlarm';
 import { CapacitorBleTransport } from '../transports/capacitor';
 import { Badge, Button, Card, Field, inputCls, PageHeader, Toggle } from '../components/ui';
 import { APP_VERSION } from '../components/UpdateBanner';
@@ -89,6 +90,8 @@ export function SettingsPage() {
         </Card>
       )}
 
+      {phoneAlarmsAvailable() && <PhoneAlarmCard />}
+
       <Card title="Preferences">
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="This device's name (shown on the desktop)"><input className={inputCls} value={s.settings.clientName} onChange={(e) => store.updateSettings({ clientName: e.target.value })} /></Field>
@@ -150,5 +153,40 @@ function AutostartToggle() {
       </span>
       <Toggle on={!!on} onChange={(v) => { desktop?.setLaunchAtLogin(v); setOn(v); }} />
     </label>
+  );
+}
+
+/** Android: wake-up lights tied to the phone's own alarm clock, run by the PC or, if it's asleep, by the phone. */
+function PhoneAlarmCard() {
+  const s = useStore((x) => x);
+  const st = s.settings;
+  const pa = s.phoneAlarm;
+  const fmt = (t: number | null | undefined) => (t ? new Date(t).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
+  return (
+    <Card title="Wake-up lights with my phone alarm" action={<Toggle on={st.phoneAlarmSync} onChange={(phoneAlarmSync) => store.updateSettings({ phoneAlarmSync })} />}>
+      <div className="space-y-3 text-sm text-white/60">
+        <p>The lights start before the alarm of your Clock app, build up, and flash when it rings. <b>No need to keep GlowPilot open</b>: Android wakes it at the right time, even locked, like the Clock app.</p>
+        <p>At that moment the phone first asks your PC. If the PC is on and connected to the lights, the PC does it. If the PC is asleep, off or unreachable, the phone connects to the lights and does it itself.</p>
+        {st.phoneAlarmSync && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Start the lights before the alarm">
+              <select className={inputCls} value={st.phoneAlarmMinutes} onChange={(e) => store.updateSettings({ phoneAlarmMinutes: +e.target.value })}>
+                {[10, 20, 30, 45, 60, 90].map((m) => <option key={m} value={m}>{m} minutes</option>)}
+              </select>
+            </Field>
+            <Field label="Colour"><input type="color" className="h-11 w-full rounded-xl bg-transparent" value={st.phoneAlarmColor} onChange={(e) => store.updateSettings({ phoneAlarmColor: e.target.value })} /></Field>
+          </div>
+        )}
+        <div className="rounded-xl bg-white/5 p-3 text-xs">
+          <div>Next phone alarm: <b className="text-white/85">{fmt(pa?.systemAt)}</b></div>
+          <div>Next light alarm handled by this phone: <b className="text-white/85">{fmt(pa?.nextAt)}</b></div>
+          <div>PC link for the alarm: <b className="text-white/85">{st.remoteToken ? 'paired ✓' : 'not paired (the phone will always do it alone)'}</b></div>
+        </div>
+        {pa && !pa.exact && (
+          <div className="flex flex-wrap items-center gap-2 text-orange-200">Android needs your OK for exact alarms.<Button onClick={() => void GlowAlarm.openExactAlarmSettings()}>Allow</Button></div>
+        )}
+        <Button onClick={() => void GlowAlarm.stop()}>Stop a ringing light alarm</Button>
+      </div>
+    </Card>
   );
 }

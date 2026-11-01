@@ -86,3 +86,22 @@ test('elevated update command quotes the installer path safely', () => {
     Module._load = orig;
   }
 });
+
+test('alarm API for the phone: token required, status and phone alarm', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gp-'));
+  const received = [];
+  const port = 48000 + Math.floor(Math.random() * 50);
+  const api = new LocalApiServer({ port, staticDir: dir, storeFile: path.join(dir, 't.json'), onMessage: (c, m) => received.push([c, m]) });
+  api.tokens = { tok: { name: 'Phone' } };
+  api.start();
+  await new Promise((r) => api.server.once('listening', r));
+  const base = `http://127.0.0.1:${port}`;
+  assert.strictEqual((await fetch(`${base}/api/status`)).status, 401);
+  const auth = { authorization: 'Bearer tok' };
+  api.broadcastState({ status: 'connected', lights: [{ id: 'a', name: 'x', status: 'connected' }], alarmActive: true });
+  assert.deepStrictEqual(await (await fetch(`${base}/api/status`, { headers: auth })).json(), { connected: true, alarmActive: true });
+  const r = await fetch(`${base}/api/phone-alarm`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify({ at: 1790000000000, minutes: 45, color: '#ff0000' }) });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(received, [['Phone', { t: 'phoneAlarm', at: 1790000000000, minutes: 45, color: '#ff0000' }]]);
+  api.stop();
+});

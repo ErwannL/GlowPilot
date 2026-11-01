@@ -47,7 +47,7 @@ export function Schedules() {
                 <div className="text-sm text-white/50">{describeSchedule(sc)}{sc.action.type === 'scene' ? ` · ${s.scenes.find((x) => x.id === (sc.action as { sceneId: string }).sceneId)?.name ?? ''}` : ''}</div>
                 {n && <div className="mt-1"><Badge tone="purple">Next: {n.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}</Badge></div>}
               </div>
-              <Button onClick={() => setEdit(sc)}>Edit</Button>
+              {sc.id === 'phone-alarm' ? <Badge tone="blue">Synced from your phone's alarm</Badge> : <Button onClick={() => setEdit(sc)}>Edit</Button>}
             </div>
           );
         })}
