@@ -93,7 +93,8 @@ class Light {
       publish();
     });
     this.controller.on('error', (e) => log(`[${this.name}] error: ${e}`));
-    this.controller.on('external', () => {
+    this.controller.on('external', (b) => {
+      log(`[${this.name}] changed by something else (IR remote / another app): ${Buffer.from(b).toString('hex')}`);
       // IR remote / another app changed the light: stop animating it.
       this.engine.halt();
       publish();
@@ -198,7 +199,24 @@ type HubMessage = ClientMessage
 let lastScan: { id: string; name: string; rssi?: number }[] = [];
 let scanning = false;
 
+/** One readable line per change, with the device that asked: answers "who changed my lights?". */
+function describe(m: HubMessage): string | null {
+  switch (m.t) {
+    case 'command': {
+      const c = m.cmd as Command & Record<string, unknown>;
+      const detail = c.type === 'color' ? JSON.stringify(c.color) : c.type === 'scene' ? String(c.sceneId) : c.type === 'power' ? (c.on ? 'on' : 'off')
+        : c.type === 'brightness' ? `${c.level}%` : c.type === 'softwareEffect' ? (c.effect as { type: string }).type : c.type === 'controllerEffect' ? `#${c.id}` : '';
+      return `${c.type} ${detail} → ${m.target ?? 'all'}`;
+    }
+    case 'activity': return m.activity.foreground !== foreground ? `focused app: ${m.activity.foreground}` : null;
+    case 'setCalibration': return `calibration ${m.id}: gains r${m.calibration.gain.r} g${m.calibration.gain.g} b${m.calibration.gain.b}`;
+    default: return m.t;
+  }
+}
+
 async function onMessage(client: string, m: HubMessage) {
+  const what = describe(m);
+  if (what) log(`[${client}] ${what}`);
   switch (m.t) {
     case 'command': return exec(m.cmd, m.target);
     case 'activity': return onActivity(m.activity);

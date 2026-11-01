@@ -88,9 +88,9 @@ function CalibrationCard({ cal }: { cal: Calibration }) {
         })}
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Slider label="Red gain" max={150} value={cal.gain.r * 100} onChange={(v) => set({ gain: { ...cal.gain, r: v / 100 } })} />
-        <Slider label="Green gain" max={150} value={cal.gain.g * 100} onChange={(v) => set({ gain: { ...cal.gain, g: v / 100 } })} />
-        <Slider label="Blue gain" max={150} value={cal.gain.b * 100} onChange={(v) => set({ gain: { ...cal.gain, b: v / 100 } })} />
+        <Slider label="Red gain" min={20} max={150} value={cal.gain.r * 100} onChange={(v) => set({ gain: { ...cal.gain, r: v / 100 } })} />
+        <Slider label="Green gain" min={20} max={150} value={cal.gain.g * 100} onChange={(v) => set({ gain: { ...cal.gain, g: v / 100 } })} />
+        <Slider label="Blue gain" min={20} max={150} value={cal.gain.b * 100} onChange={(v) => set({ gain: { ...cal.gain, b: v / 100 } })} />
         <Slider label="Warm green cut" value={cal.warmGreenCut * 100} onChange={(v) => set({ warmGreenCut: v / 100 })} />
         <Slider label="Gamma" min={100} max={280} suffix="" value={cal.gamma * 100} onChange={(v) => set({ gamma: v / 100 })} />
         <label className="block text-xs text-white/60">Channel order (if red shows as green, change this)
