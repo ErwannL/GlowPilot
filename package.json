@@ -1,13 +1,13 @@
 {
   "name": "glowpilot",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "workspaces": [
     "packages/*",
     "apps/*"
   ],
   "scripts": {
-    "test": "npm run test -w @glowpilot/core && npm run test -w @glowpilot/desktop",
+    "test": "npm run test -w @glowpilot/core && npm run test -w @glowpilot/desktop && npm run test -w @glowpilot/hub",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "dev": "npm run dev -w @glowpilot/web",
     "build": "npm run build -w @glowpilot/web",

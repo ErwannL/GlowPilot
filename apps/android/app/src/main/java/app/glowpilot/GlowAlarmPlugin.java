@@ -119,6 +119,60 @@ public class GlowAlarmPlugin extends Plugin {
         call.resolve(r);
     }
 
+    /** Noyau Musique library (file tracks only), fetched natively: no CORS, works with the HTTPS address. */
+    @PluginMethod
+    public void noyauTracks(PluginCall call) {
+        String base = call.getString("url", ""), token = call.getString("token", "");
+        try {
+            java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(base.replaceAll("/$", "") + "/api/music/tracks").openConnection();
+            c.setConnectTimeout(6000);
+            c.setReadTimeout(10000);
+            c.setRequestProperty("Authorization", "Bearer " + token);
+            int code = c.getResponseCode();
+            if (code != 200) { call.reject("Noyau answered " + code + (code == 401 ? " (token refused)" : "")); return; }
+            StringBuilder sb = new StringBuilder();
+            try (java.io.BufferedReader br = new java.io.BufferedReader(new java.io.InputStreamReader(c.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) { String l; while ((l = br.readLine()) != null) sb.append(l); }
+            org.json.JSONArray all = new org.json.JSONArray(sb.toString()), files = new org.json.JSONArray();
+            for (int i = 0; i < all.length(); i++) { org.json.JSONObject t = all.getJSONObject(i); if ("fichier".equals(t.optString("source"))) files.put(t); }
+            JSObject r = new JSObject();
+            r.put("tracks", files);
+            call.resolve(r);
+        } catch (Exception e) {
+            call.reject("Noyau not reachable: " + e.getMessage());
+        }
+    }
+
+    /** Download a Noyau track into the app once, so the alarm rings even if the server or Wi-Fi is down. */
+    @PluginMethod
+    public void downloadNoyauTrack(PluginCall call) {
+        String base = call.getString("url", ""), token = call.getString("token", ""), name = call.getString("name", "Noyau");
+        Integer id = call.getInt("id");
+        if (id == null) { call.reject("no track id"); return; }
+        try {
+            java.io.File dir = new java.io.File(getContext().getFilesDir(), "alarm-sounds");
+            if (!dir.exists() && !dir.mkdirs()) throw new Exception("cannot create folder");
+            java.io.File out = new java.io.File(dir, "noyau-" + id);
+            java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(base.replaceAll("/$", "") + "/api/music/tracks/" + id + "/file").openConnection();
+            c.setConnectTimeout(6000);
+            c.setReadTimeout(60000);
+            c.setRequestProperty("Authorization", "Bearer " + token);
+            if (c.getResponseCode() != 200) { call.reject("Noyau answered " + c.getResponseCode()); return; }
+            java.io.File tmp = new java.io.File(dir, "noyau-" + id + ".part");
+            try (java.io.InputStream in = c.getInputStream(); java.io.OutputStream os = new java.io.FileOutputStream(tmp)) {
+                byte[] buf = new byte[64 * 1024];
+                int n;
+                while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+            }
+            if (!tmp.renameTo(out)) throw new Exception("cannot save file");
+            JSObject r = new JSObject();
+            r.put("uri", Uri.fromFile(out).toString());
+            r.put("name", name);
+            call.resolve(r);
+        } catch (Exception e) {
+            call.reject("Download failed: " + e.getMessage());
+        }
+    }
+
     /** Asked once, from the alarm editor, when the user chooses "lights pulse with the music". */
     @PluginMethod
     public void ensureMicrophone(PluginCall call) {

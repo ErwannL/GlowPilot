@@ -26,6 +26,8 @@ export function Devices() {
   const [raw, setRaw] = useState('7e 07 05 03 ff 00 00 10 ef');
   const [editGroup, setEditGroup] = useState<LightGroup | null>(null);
   const remote = s.mode === 'remote';
+  // Connected to a GlowPilot Hub: everything is managed remotely on the server. Plain PC remote: read-only.
+  const readOnly = remote && !s.hub;
   const anyConnected = s.lights.some((l) => l.status === 'connected');
 
   const startTest = () => { setResults([]); setStep(0); TEST_STEPS[0].run(); };
@@ -47,7 +49,8 @@ export function Devices() {
   return (
     <div className="space-y-5">
       <PageHeader title="Devices" subtitle="Your controllers, and the groups you control together."
-        action={!remote && <div className="flex gap-2">
+        action={!readOnly && <div className="flex gap-2">
+          {s.hub && <Button variant="primary" disabled={s.hubScanning} onClick={() => store.hubScanLights()}>{s.hubScanning ? 'Scanning from the hub…' : '+ Add a light'}</Button>}
           {s.mode === 'simulator' && <Button onClick={() => store.addSimulatedLight()}>+ Simulated light</Button>}
           {s.mode === 'local' && <Button variant="primary" onClick={() => store.addLight()}>+ Add a light</Button>}
         </div>} />
@@ -60,16 +63,32 @@ export function Devices() {
         <Card>
           <p className="text-sm text-white/60">No controller yet. GlowPilot never connects to a nearby controller on its own: you pick it from the list.</p>
           {s.mode === 'local' && <Button className="mt-3" variant="primary" onClick={() => store.addLight()}>Scan for controllers</Button>}
-          {remote && <p className="mt-2 text-sm text-white/50">GlowPilot Desktop has no controller connected.</p>}
+          {readOnly && <p className="mt-2 text-sm text-white/50">GlowPilot Desktop has no controller connected.</p>}
+          {s.hub && <p className="mt-2 text-sm text-white/50">The hub has no light yet: tap “Add a light”.</p>}
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          {s.lights.map((l) => <LightCard key={l.id} light={l} remote={remote} groups={s.groups.filter((g) => g.deviceIds.includes(l.id)).map((g) => g.name)} />)}
+          {s.lights.map((l) => <LightCard key={l.id} light={l} remote={readOnly} groups={s.groups.filter((g) => g.deviceIds.includes(l.id)).map((g) => g.name)} />)}
         </div>
       )}
       <p className="text-xs text-white/40">Each controller accepts <b>one connection at a time</b>: close Lotus Lantern on your phone first. Controllers don't report their colour, so GlowPilot remembers what it last sent.</p>
 
-      {!remote && (
+      {s.hub && (s.hubScanning || s.hubScan.length > 0) && (
+        <Card title="Lights found by the hub">
+          {s.hubScanning && <p className="text-sm text-white/50 gp-pulse">Scanning around the server… (10 s)</p>}
+          <div className="space-y-2">
+            {s.hubScan.map((d) => (
+              <div key={d.id} className="flex items-center justify-between gap-3 rounded-2xl bg-white/5 px-4 py-3">
+                <span><span className="font-medium">{d.name}</span><span className="block text-xs text-white/40">{d.id}</span></span>
+                <Button variant="primary" onClick={() => store.hubAddLight(d.id, d.name)}>Add</Button>
+              </div>
+            ))}
+          </div>
+          {!s.hubScanning && s.hubScan.length === 0 && <p className="text-sm text-white/50">Nothing new found. A controller connected to a phone or a PC is invisible: close Lotus Lantern / GlowPilot there.</p>}
+        </Card>
+      )}
+
+      {!readOnly && (
         <Card title="Groups" action={<Button variant="soft" disabled={s.lights.length === 0} onClick={() => setEditGroup({ id: newId('grp'), name: 'Living room', icon: '🛋️', deviceIds: s.lights.map((l) => l.id) })}>+ New group</Button>}>
           {s.groups.length === 0 ? (
             <p className="text-sm text-white/50">Groups let you put some lights on one theme and others on another, e.g. "Desk" on Gaming while "Bed" stays on Relax. Pick the group at the top of Home, Color, Effects or Scenes; automations and schedules can target a group too.</p>
@@ -90,7 +109,7 @@ export function Devices() {
         </Card>
       )}
 
-      {remote && s.owner === 'desktop' && (
+      {readOnly && s.owner === 'desktop' && (
         <Card title="Connection ownership">
           <p className="mb-3 text-sm text-white/60">GlowPilot Desktop currently owns the Bluetooth link. Take it over to control the strip directly from this device, e.g. when you leave the PC.</p>
           <Button onClick={() => store.takeOverFromDesktop()}>Take over Bluetooth</Button>

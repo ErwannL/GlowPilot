@@ -11,7 +11,7 @@ const PRESETS = ['#ff0000', '#ff6a00', '#ffc400', '#00ff40', '#00e5ff', '#0040ff
 export function ColorPage() {
   const light = useStore((s) => s.snapshot.light);
   const device = useStore((s) => s.device);
-  const remote = useStore((s) => s.mode === 'remote');
+  const remote = useStore((s) => s.mode === 'remote' && !s.hub);
   const [color, setColor] = useState<RGB>(light.color);
   const [hex, setHex] = useState(rgbToHex(light.color));
   const [kelvin, setKelvin] = useState(3200);

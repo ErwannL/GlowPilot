@@ -98,6 +98,9 @@ export interface Settings {
   phoneAlarmSync: boolean;
   phoneAlarmMinutes: number;
   phoneAlarmColor: string;
+  /** Noyau (for the phone's "Choose from Noyau" alarm music). */
+  noyauUrl: string;
+  noyauToken: string;
   automationEnabled: boolean;
   onboarded: boolean;
 }
@@ -134,6 +137,13 @@ export interface UIState {
   update: UpdateInfo | null;
   /** What the PC reports about its lights (used by the phone's alarm to find them on its own). */
   remoteLights: { names: string[]; addresses: string[] };
+  /** Connected to a GlowPilot Hub (always-on server that owns the lights), not to a PC. */
+  hub: boolean;
+  /** Hub: controllers found by its last Bluetooth scan, not added yet. */
+  hubScan: { id: string; name: string; rssi?: number }[];
+  hubScanning: boolean;
+  /** Hub ↔ Noyau Musique settings as reported by the hub (the token itself never leaves the hub). */
+  hubNoyau: { url: string; musicSync: boolean; colors: string[]; target: string; hasToken: boolean; status: string; playing: boolean } | null;
   /** Android: next ring of the phone's alarm clock, and when the phone will run a light alarm. */
   phoneAlarm: { systemAt: number | null; nextAt: number | null; exact: boolean } | null;
 }
@@ -226,6 +236,8 @@ const defaultSettings: Settings = {
   phoneAlarmSync: true,
   phoneAlarmMinutes: 60,
   phoneAlarmColor: '#ff8a30',
+  noyauUrl: 'https://noyau.unicorn-geological.ts.net',
+  noyauToken: '',
   automationEnabled: true,
   onboarded: false,
 };
@@ -380,6 +392,10 @@ class Store {
       music: { running: false, level: 0 },
       update: null,
       remoteLights: { names: [], addresses: [] },
+      hub: false,
+      hubScan: [],
+      hubScanning: false,
+      hubNoyau: null,
       phoneAlarm: null,
       paused: null,
     };
@@ -432,7 +448,13 @@ class Store {
 
   /** Recompute the light views and the primary-light fields. */
   private refresh = () => {
-    if (this.state.mode === 'remote') return;
+    if (this.state.mode === 'remote') {
+      // Hub: show the target's first light, like in local mode.
+      const ids = this.remoteIdsFor(this.state.target);
+      const primary = this.state.lights.find((l) => ids.includes(l.id)) ?? this.state.lights[0];
+      if (primary && this.state.hub) this.set({ device: primary.device, status: primary.status, snapshot: primary.snapshot });
+      return;
+    }
     const lights = this.lights.map((l) => l.view());
     this.updateKeepAwake();
     const primary = this.targetLights()[0] ?? this.lights[0];
@@ -447,6 +469,13 @@ class Store {
   };
 
   // --- targets & groups ---------------------------------------------------------------
+
+  private remoteIdsFor(target: Target): string[] {
+    const all = this.state.lights.map((l) => l.id);
+    if (target === 'all') return all;
+    if (target.startsWith('dev:')) return all.filter((id) => id === target.slice(4));
+    return this.state.groups.find((g) => g.id === target)?.deviceIds ?? all;
+  }
 
   /** Device ids a target refers to. */
   deviceIdsFor(target: Target | null | undefined): string[] {
@@ -469,6 +498,7 @@ class Store {
   }
 
   saveGroups(groups: LightGroup[]) {
+    if (this.state.mode === 'remote') this.sendRemote({ t: 'saveGroups', groups } as unknown as ClientMessage);
     save('groups', groups);
     this.set({ groups });
     if (!groups.some((g) => g.id === this.state.target) && !this.state.target.startsWith('dev:')) this.setTarget('all');
@@ -552,7 +582,22 @@ class Store {
   // --- devices ------------------------------------------------------------------------
 
   /** Scan and add a controller (or reconnect it if already known). */
+  /** Hub: scan from the server; the result shows up in the Devices page to pick from. */
+  hubScanLights() {
+    this.sendRemote({ t: 'scanLights' } as unknown as ClientMessage);
+    this.set({ hubScanning: true });
+  }
+
+  saveHubNoyau(noyau: Partial<{ url: string; token: string; musicSync: boolean; colors: string[]; target: string }>) {
+    this.sendRemote({ t: 'saveNoyau', noyau } as unknown as ClientMessage);
+  }
+
+  hubAddLight(id: string, name: string) {
+    this.sendRemote({ t: 'addLight', id, name } as unknown as ClientMessage);
+  }
+
   async addLight() {
+    if (this.state.mode === 'remote') return this.hubScanLights();
     try {
       this.set({ error: null });
       const transport = this.makeTransport(this.state.mode);
@@ -595,6 +640,7 @@ class Store {
   }
 
   connectLight(id: string) {
+    if (this.state.mode === 'remote') return this.sendRemote({ t: 'connectLight', id } as unknown as ClientMessage);
     const light = this.lights.find((l) => l.device.id === id);
     if (!light) return;
     void light.controller.connect(light.device).catch((e: Error) => {
@@ -615,6 +661,7 @@ class Store {
   }
 
   removeLight(id: string, persist = true) {
+    if (this.state.mode === 'remote') return this.sendRemote({ t: 'removeLight', id } as unknown as ClientMessage);
     const light = this.lights.find((l) => l.device.id === id);
     if (!light) return;
     light.dispose();
@@ -632,6 +679,7 @@ class Store {
   }
 
   renameLight(id: string, alias: string) {
+    if (this.state.mode === 'remote') return this.sendRemote({ t: 'renameLight', id, alias } as unknown as ClientMessage);
     const light = this.lights.find((l) => l.device.id === id);
     if (!light) return;
     light.device = { ...light.device, alias };
@@ -646,6 +694,11 @@ class Store {
   }
 
   setCalibration(cal: Calibration, id?: string) {
+    if (this.state.mode === 'remote') {
+      const lid = id ?? this.remoteIdsFor(this.state.target)[0];
+      if (lid) this.sendRemote({ t: 'setCalibration', id: lid, calibration: cal } as unknown as ClientMessage);
+      return;
+    }
     const light = id ? this.lights.find((l) => l.device.id === id) : this.targetLights()[0];
     if (!light) return;
     light.device = { ...light.device, calibration: cal };
@@ -879,6 +932,10 @@ class Store {
     void desktop.updateStatus?.().then((update) => this.set({ update }));
     desktop.onActivity((a) => {
       this.set({ activity: a, foreground: a.foreground });
+      if (this.state.mode === 'remote' && this.state.remote.state === 'connected') {
+        this.sendRemote({ t: 'activity', activity: a } as unknown as ClientMessage);
+        return;
+      }
       if (!this.state.settings.automationEnabled || this.state.mode === 'remote' || !this.lights.length || this.state.paused) return;
       const primary = this.lights[0];
       const d = this.automation.evaluate(a, primary.engine.activeSceneId);
@@ -981,8 +1038,17 @@ class Store {
           device: r.deviceName ? { id: 'remote', name: r.deviceName, driverId: 'elk', calibration: DEFAULT_CALIBRATION } : null,
           groups: (r.groups ?? []) as LightGroup[],
           remoteLights: { names: r.lightNames ?? [], addresses: r.lightAddresses ?? [] },
-          lights: (r.lights ?? []).map((l) => ({ id: l.id, device: { id: l.id, name: l.name, driverId: 'elk', calibration: DEFAULT_CALIBRATION }, status: l.status, snapshot: r.snapshot, sim: null, error: null })),
+          lights: (r.lights ?? []).map((l) => {
+            const x = l as typeof l & { snapshot?: EngineSnapshot; calibration?: Calibration; deviceName?: string };
+            const alias = x.deviceName && x.deviceName !== l.name ? l.name : undefined;
+            return { id: l.id, device: { id: l.id, name: x.deviceName ?? l.name, alias, driverId: 'elk', calibration: x.calibration ?? DEFAULT_CALIBRATION }, status: l.status, snapshot: x.snapshot ?? r.snapshot, sim: null, error: null };
+          }),
+          hub: !!(r as { hub?: boolean }).hub,
+          hubScan: (r as { scan?: UIState['hubScan'] }).scan ?? [],
+          hubScanning: !!(r as { scanning?: boolean }).scanning,
+          hubNoyau: (r as { noyau?: UIState['hubNoyau'] }).noyau ?? null,
         });
+        this.refresh();
       }
     };
     ws.onclose = () => {

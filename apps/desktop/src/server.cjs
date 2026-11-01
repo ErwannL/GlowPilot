@@ -42,6 +42,21 @@ class LocalApiServer {
     fs.writeFileSync(this.opts.storeFile, JSON.stringify(this.tokens));
   }
 
+  /** Single-use 6-digit code → long-lived token. Five wrong codes from an address block it. */
+  pair(ip, code, clientName) {
+    const fails = this.failedPairs.get(ip) || 0;
+    if (fails >= 5) return { error: 'Too many wrong codes. Restart GlowPilot to get a new code.' };
+    if (String(code) !== this.code) {
+      this.failedPairs.set(ip, fails + 1);
+      return { error: 'Wrong pairing code' };
+    }
+    const token = crypto.randomBytes(24).toString('hex');
+    this.tokens[token] = { name: String(clientName || 'Device').slice(0, 40), pairedAt: Date.now() };
+    this.saveTokens();
+    this.code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0'); // single-use code
+    return { token };
+  }
+
   pairingInfo() {
     return { code: this.code, addresses: lanAddresses(), port: this.opts.port, clients: Object.values(this.tokens).map((t) => t.name) };
   }
@@ -57,6 +72,14 @@ class LocalApiServer {
     const server = http.createServer((req, res) => {
       if (!isPrivateAddress(req.socket.remoteAddress)) { req.socket.destroy(); return; }
       const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
+      // Public: lets phones find GlowPilot on the network and prefer a hub over a PC.
+      if (urlPath === '/api/info') return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ app: 'GlowPilot', role: this.opts.role || 'desktop' }));
+      // Pairing code, only from the machine itself (the hub has no screen: Noyau or an SSH session shows it).
+      if (urlPath === '/api/pairing') {
+        const a = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+        if (a !== '127.0.0.1' && a !== '::1') return res.writeHead(403).end();
+        return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(this.pairingInfo()));
+      }
       if (urlPath.startsWith('/api/')) return this.handleApi(req, res, urlPath);
       const file = path.normalize(path.join(this.opts.staticDir, urlPath === '/' ? 'index.html' : urlPath));
       if (!file.startsWith(path.normalize(this.opts.staticDir))) { res.writeHead(403).end(); return; }
@@ -80,17 +103,8 @@ class LocalApiServer {
         let msg;
         try { msg = JSON.parse(String(raw)); } catch { return; }
         if (msg.t === 'pair') {
-          const fails = this.failedPairs.get(ip) || 0;
-          if (fails >= 5) return send(ws, { t: 'denied', reason: 'Too many wrong codes. Restart GlowPilot Desktop to get a new code.' });
-          if (String(msg.code) !== this.code) {
-            this.failedPairs.set(ip, fails + 1);
-            return send(ws, { t: 'denied', reason: 'Wrong pairing code' });
-          }
-          const token = crypto.randomBytes(24).toString('hex');
-          this.tokens[token] = { name: String(msg.clientName || 'Device').slice(0, 40), pairedAt: Date.now() };
-          this.saveTokens();
-          this.code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0'); // single-use code
-          return send(ws, { t: 'paired', token });
+          const r = this.pair(ip, msg.code, msg.clientName);
+          return send(ws, r.token ? { t: 'paired', token: r.token } : { t: 'denied', reason: r.error });
         }
         if (msg.t === 'auth') {
           const entry = this.tokens[msg.token];
@@ -119,6 +133,18 @@ class LocalApiServer {
    */
   handleApi(req, res, urlPath) {
     const json = (code, body) => res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(body));
+    const readBody = (cb) => {
+      let body = '';
+      req.on('data', (d) => { body += d; if (body.length > 65536) req.destroy(); });
+      req.on('end', () => { try { cb(JSON.parse(body || '{}')); } catch { json(400, { error: 'bad json' }); } });
+    };
+    // HTTP pairing, for services that don't speak WebSocket (e.g. Noyau): { code, clientName } → { token }.
+    if (req.method === 'POST' && urlPath === '/api/pair') {
+      return readBody((b) => {
+        const r = this.pair(String(req.socket.remoteAddress || ''), b.code, b.clientName);
+        json(r.token ? 200 : 403, r.token ? { token: r.token } : { error: r.error });
+      });
+    }
     const token = /^Bearer\s+(\S+)$/.exec(req.headers.authorization || '')?.[1];
     const client = token && this.tokens[token];
     if (!client) return json(401, { error: 'pair this device first' });
@@ -142,6 +168,16 @@ class LocalApiServer {
         }
       });
       return;
+    }
+    // Full state (lights, groups, scenes, schedules…), same as the WebSocket 'state' message.
+    if (req.method === 'GET' && urlPath === '/api/state') return json(200, this.lastState ?? {});
+    // Any client message over HTTP: { t: 'command', cmd, target } to switch scenes, colours, power…
+    if (req.method === 'POST' && urlPath === '/api/message') {
+      return readBody((m) => {
+        if (!m || typeof m.t !== 'string' || ['pair', 'auth'].includes(m.t)) return json(400, { error: 'bad message' });
+        this.opts.onMessage(client.name, m);
+        json(200, { ok: true });
+      });
     }
     if (req.method === 'POST' && urlPath === '/api/alarm-stop') {
       this.opts.onMessage(client.name, { t: 'alarmStop' });

@@ -105,3 +105,26 @@ test('alarm API for the phone: token required, status and phone alarm', async ()
   assert.deepStrictEqual(received, [['Phone', { t: 'phoneAlarm', at: 1790000000000, minutes: 45, color: '#ff0000' }]]);
   api.stop();
 });
+
+test('HTTP pairing, state and messages (for Noyau)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gp-'));
+  const received = [];
+  const port = 48100 + Math.floor(Math.random() * 50);
+  const api = new LocalApiServer({ port, staticDir: dir, storeFile: path.join(dir, 't.json'), role: 'hub', onMessage: (c, m) => received.push([c, m]) });
+  api.start();
+  await new Promise((r) => api.server.once('listening', r));
+  const base = `http://127.0.0.1:${port}`;
+  assert.deepStrictEqual(await (await fetch(`${base}/api/info`)).json(), { app: 'GlowPilot', role: 'hub' });
+  const { code } = await (await fetch(`${base}/api/pairing`)).json();
+  assert.strictEqual((await fetch(`${base}/api/pair`, { method: 'POST', body: JSON.stringify({ code: '000000x', clientName: 'Noyau' }) })).status, 403);
+  const { token } = await (await fetch(`${base}/api/pair`, { method: 'POST', body: JSON.stringify({ code, clientName: 'Noyau' }) })).json();
+  assert.ok(token);
+  const auth = { authorization: `Bearer ${token}` };
+  api.broadcastState({ scenes: [{ id: 'relax' }] });
+  assert.deepStrictEqual(await (await fetch(`${base}/api/state`, { headers: auth })).json(), { scenes: [{ id: 'relax' }] });
+  const r = await fetch(`${base}/api/message`, { method: 'POST', headers: auth, body: JSON.stringify({ t: 'command', cmd: { type: 'scene', sceneId: 'relax' }, target: 'all' }) });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(received, [['Noyau', { t: 'command', cmd: { type: 'scene', sceneId: 'relax' }, target: 'all' }]]);
+  assert.strictEqual((await fetch(`${base}/api/message`, { method: 'POST', headers: auth, body: JSON.stringify({ t: 'auth' }) })).status, 400);
+  api.stop();
+});

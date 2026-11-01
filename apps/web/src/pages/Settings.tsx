@@ -3,6 +3,7 @@ import { desktop, store, useStore, type Mode, type UpdateInfo } from '../store';
 import { WebBluetoothTransport } from '../transports/webBluetooth';
 import { discoverDesktop } from '../discovery';
 import { GlowAlarm, phoneAlarmsAvailable } from '../phoneAlarm';
+import { NoyauCard } from '../components/NoyauCard';
 import { CapacitorBleTransport } from '../transports/capacitor';
 import { Badge, Button, Card, Field, inputCls, PageHeader, Toggle } from '../components/ui';
 import { APP_VERSION } from '../components/UpdateBanner';
@@ -23,8 +24,7 @@ export function SettingsPage() {
 
   const modes: { id: Mode; title: string; desc: string; ok: boolean }[] = [
     { id: 'local', title: 'Direct Bluetooth', desc: CapacitorBleTransport.available ? 'Native Android Bluetooth' : desktop != null ? 'This PC talks to the controller' : 'Web Bluetooth (Chrome / Edge)', ok: WebBluetoothTransport.available || CapacitorBleTransport.available },
-    // On GlowPilot Desktop itself this option makes no sense: it IS the desktop. Phones use it.
-    ...(desktop ? [] : [{ id: 'remote' as Mode, title: 'Through GlowPilot Desktop', desc: 'Use the PC as the Bluetooth bridge over your local network', ok: true }]),
+    { id: 'remote' as Mode, title: desktop ? 'Through GlowPilot Hub' : 'Through the Hub or my PC', desc: desktop ? 'An always-on server drives the lights; this PC sends it your games and apps' : 'The hub (always-on server) or GlowPilot Desktop drives the lights over Bluetooth', ok: true },
     { id: 'simulator', title: 'Simulator', desc: 'Try everything without hardware', ok: true },
   ];
 
@@ -33,8 +33,8 @@ export function SettingsPage() {
       <PageHeader title="Settings" subtitle="Connection, sync and preferences." />
 
       <Card title="How this device controls the lights">
-        {desktop && <p className="mb-3 text-sm text-white/50">This is <b>GlowPilot Desktop</b>: it talks to your lights directly. Phones and other browsers connect to it (see below).</p>}
-        <div className={`grid gap-3 ${desktop ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
+        {desktop && <p className="mb-3 text-sm text-white/50">This is <b>GlowPilot Desktop</b>. Either it talks to your lights directly, or, with a GlowPilot Hub on an always-on server, the hub does and this PC just tells it which game or app you are using.</p>}
+        <div className="grid gap-3 md:grid-cols-3">
           {modes.map((m) => (
             <button key={m.id} disabled={!m.ok} onClick={() => store.setupMode(m.id)}
               className={`rounded-2xl border p-4 text-left transition disabled:opacity-35 ${s.mode === m.id ? 'border-violet-400/60 bg-violet-500/10' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}>
@@ -46,9 +46,9 @@ export function SettingsPage() {
       </Card>
 
       {s.mode === 'remote' && (
-        <Card title="GlowPilot Desktop" action={<Badge tone={s.remote.state === 'connected' ? 'green' : 'orange'}>{s.remote.state}</Badge>}>
+        <Card title={s.hub ? 'GlowPilot Hub' : 'GlowPilot Hub / Desktop'} action={<Badge tone={s.remote.state === 'connected' ? 'green' : 'orange'}>{s.remote.state}</Badge>}>
           <div className="space-y-3">
-            <Field label="Desktop address" hint="Shown in GlowPilot Desktop → Settings, e.g. ws://192.168.1.20:47821">
+            <Field label="Address" hint="Tap Find: the hub is preferred over a PC. Or type it, e.g. ws://192.168.1.16:47821">
               <div className="flex gap-2">
                 <input className={inputCls} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="ws://192.168.1.20:47821" />
                 <Button onClick={() => { store.updateSettings({ remoteUrl: url.trim() }); store.connectRemote(); }}>Connect</Button>
@@ -56,7 +56,7 @@ export function SettingsPage() {
               </div>
             </Field>
             {s.remote.state === 'needsPairing' && (
-              <Field label="Pairing code" hint="6 digits shown on the desktop. Pairing happens once per device.">
+              <Field label="Pairing code" hint="6 digits. On a PC: GlowPilot Desktop → Settings. On the hub: shown in Noyau, or `curl http://127.0.0.1:47821/api/pairing` on the server. Once per device.">
                 <div className="flex gap-2">
                   <input className={inputCls + ' tracking-[.4em] font-mono'} maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} />
                   <Button variant="primary" disabled={code.length !== 6} onClick={() => store.pair(code)}>Pair</Button>
@@ -91,6 +91,8 @@ export function SettingsPage() {
       )}
 
       {phoneAlarmsAvailable() && <PhoneAlarmCard />}
+
+      <NoyauCard />
 
       <Card title="Preferences">
         <div className="grid gap-4 sm:grid-cols-2">

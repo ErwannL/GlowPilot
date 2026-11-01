@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { ALARM_DEFAULTS, type AlarmOptions } from '@glowpilot/core';
 import { GlowAlarm, phoneAlarmsAvailable } from '../phoneAlarm';
-import { Button, Field, inputCls, Slider, Toggle } from './ui';
+import { Button, Field, inputCls, Modal, Slider, Toggle } from './ui';
+import { useStore } from '../store';
 
 type AlarmAction = { type: 'alarm'; minutes: number; color: string } & AlarmOptions;
 
@@ -32,8 +33,49 @@ export function AlarmEditor({ a, onChange, time }: { a: AlarmAction; onChange: (
     }
   };
 
+  const settings = useStore((s) => s.settings);
+  const [noyau, setNoyau] = useState<null | { loading?: boolean; error?: string; tracks?: { id: number; title: string; artist?: string }[]; downloading?: number }>(null);
+  const openNoyau = async () => {
+    if (!settings.noyauToken) return setNoyau({ error: 'Add your Noyau address and token in Settings → Noyau first.' });
+    setNoyau({ loading: true });
+    try {
+      const r = await GlowAlarm.noyauTracks({ url: settings.noyauUrl, token: settings.noyauToken });
+      setNoyau({ tracks: r.tracks });
+    } catch (e) {
+      setNoyau({ error: (e as Error).message });
+    }
+  };
+  const chooseNoyau = async (t: { id: number; title: string; artist?: string }) => {
+    setNoyau((n) => ({ ...n, downloading: t.id }));
+    try {
+      const name = t.artist ? `${t.title} · ${t.artist}` : t.title;
+      const snd = await GlowAlarm.downloadNoyauTrack({ url: settings.noyauUrl, token: settings.noyauToken, id: t.id, name });
+      set({ sound: snd });
+      setNoyau(null);
+    } catch (e) {
+      setNoyau((n) => ({ ...n, downloading: undefined, error: (e as Error).message }));
+    }
+  };
+
   return (
     <div className="space-y-4 rounded-2xl bg-white/5 p-3">
+      {noyau && (
+        <Modal open onClose={() => setNoyau(null)} title="Music from Noyau">
+          {noyau.loading && <p className="text-sm text-white/50 gp-pulse">Loading your library…</p>}
+          {noyau.error && <p className="text-sm text-orange-200">{noyau.error}</p>}
+          <div className="max-h-[60vh] space-y-1.5 overflow-y-auto">
+            {noyau.tracks?.map((t) => (
+              <button key={t.id} disabled={noyau.downloading != null} onClick={() => void chooseNoyau(t)}
+                className="flex w-full items-center justify-between rounded-xl bg-white/5 px-3 py-2 text-left text-sm hover:bg-white/10 disabled:opacity-50">
+                <span className="min-w-0 truncate">{t.title}{t.artist ? <span className="text-white/45"> · {t.artist}</span> : null}</span>
+                <span className="text-xs text-violet-300">{noyau.downloading === t.id ? 'Downloading…' : 'Choose'}</span>
+              </button>
+            ))}
+            {noyau.tracks?.length === 0 && <p className="text-sm text-white/50">No uploaded songs in Noyau (YouTube songs can't be used for alarms).</p>}
+          </div>
+          <p className="mt-3 text-xs text-white/40">The song is downloaded once and kept on the phone: the alarm rings even if Noyau or the Wi-Fi is down.</p>
+        </Modal>
+      )}
       <div className="text-sm font-semibold">1 · Lights wake you gently</div>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Build-up (minutes)" hint={ringAt ? `Lights from ${time}, ringing at ${ringAt}.` : undefined}>
@@ -75,6 +117,7 @@ export function AlarmEditor({ a, onChange, time }: { a: AlarmAction; onChange: (
           <div className="flex flex-wrap items-center gap-2">
             <span className="min-w-0 flex-1 truncate text-sm">{a.sound === null ? '🔇 Silent (lights only)' : a.sound ? `🎵 ${a.sound.name}` : '🔔 Default alarm sound'}</span>
             <Button onClick={async () => { const s = await GlowAlarm.pickSound().catch(() => null); if (s) set({ sound: s }); }}>Choose music…</Button>
+            <Button onClick={() => void openNoyau()}>From Noyau…</Button>
             <Button onClick={() => { const { sound: _s, ...rest } = a; onChange(rest); }}>Default</Button>
             <Button onClick={() => set({ sound: null })}>Silent</Button>
           </div>

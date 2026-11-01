@@ -12,6 +12,8 @@ interface GlowAlarmPlugin {
   ensureMicrophone(): Promise<{ granted: boolean }>;
   capabilities(): Promise<{ exact: boolean; microphone: boolean; bluetooth: boolean; notifications: boolean; fullScreen: boolean }>;
   openFullScreenSettings(): Promise<void>;
+  noyauTracks(o: { url: string; token: string }): Promise<{ tracks: { id: number; title: string; artist?: string; duration_seconds?: number }[] }>;
+  downloadNoyauTrack(o: { url: string; token: string; id: number; name: string }): Promise<{ uri: string; name: string }>;
 }
 
 export interface PhoneAlarmConfig {
