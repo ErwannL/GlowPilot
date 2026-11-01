@@ -60,7 +60,7 @@ export function Dashboard() {
               <div className="mt-2 flex flex-wrap gap-2">
                 <StatusPill status={s.status} />
                 {s.mode === 'simulator' && <Badge tone="orange">Simulator</Badge>}
-                {s.mode === 'remote' && <Badge tone="blue">Via Desktop</Badge>}
+                {s.mode === 'remote' && <Badge tone="blue">{s.hub ? 'Via Hub' : 'Via Desktop'}</Badge>}
               </div>
             </div>
             <Toggle on={light.on} onChange={(on) => store.exec({ type: 'power', on })} label="Power" />
