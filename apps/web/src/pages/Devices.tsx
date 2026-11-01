@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { elkDriver, newId, rgbToHex, CALIBRATION_SWATCHES } from '@glowpilot/core';
 import { store, useStore, type LightGroup, type LightView } from '../store';
 import { Badge, Button, Card, Field, inputCls, Modal, PageHeader, StatusPill } from '../components/ui';
+import { FindDesktopCard } from '../components/FindDesktop';
 
 /** Guided hardware test: each step sends one frame and asks the user what they see. */
 const TEST_STEPS: { label: string; expect: string; run: () => void }[] = [
@@ -52,6 +53,8 @@ export function Devices() {
         </div>} />
 
       {s.error && <div className="rounded-2xl bg-red-500/10 px-4 py-3 text-sm text-red-200">{s.error}</div>}
+
+      {s.lights.length === 0 && s.mode === 'local' && <FindDesktopCard scanFailed={!!s.error} />}
 
       {s.lights.length === 0 ? (
         <Card>

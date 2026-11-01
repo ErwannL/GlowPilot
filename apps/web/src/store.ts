@@ -28,6 +28,9 @@ export interface DesktopBridge {
   launchAtLogin?(): Promise<boolean>;
   /** Called before GlowPilot Desktop really quits; the returned promise is awaited (max 1.5 s). */
   onPrepareQuit?(cb: () => Promise<void>): void;
+  /** Tray menu "Pause GlowPilot / Resume GlowPilot". */
+  onTogglePause?(cb: () => void): void;
+  setPausedInTray?(paused: boolean): void;
   onUpdate?(cb: (info: UpdateInfo) => void): void;
   installUpdate?(): void;
   checkForUpdates?(): void;
@@ -112,6 +115,11 @@ export interface UIState {
   settings: Settings;
   btChooser: { id: string; name: string }[] | null;
   music: { running: boolean; level: number };
+  /**
+   * GlowPilot stepped back: it stops animating and sending, so the IR remote / Lotus Lantern keep control.
+   * 'remote' = detected automatically, 'manual' = the user pressed Pause.
+   */
+  paused: null | { reason: 'remote' | 'manual'; at: number };
   update: UpdateInfo | null;
 }
 
@@ -242,13 +250,14 @@ class Light {
     });
     this.controller.on('error', (e) => { this.error = e; this.onChange(); });
     this.controller.on('ack', (b) => onLog('ack', b));
+    this.controller.on('external', (b) => this.onExternal?.(b));
     const write = transport.write.bind(transport);
     transport.write = async (b) => { await write(b); onLog('tx', b); };
     this.engine.on('snapshot', (snap) => {
       this.snapshot = snap;
       save(`light.${device.id}`, snap.light);
       // What the light is showing, so it comes back after a restart (scene, mix or GlowPilot effect).
-      save(`look.${device.id}`, { sceneId: snap.activeSceneId, effect: snap.softwareEffect, ramp: snap.ramp?.kind ?? null });
+      if (!this.halted()) save(`look.${device.id}`, { sceneId: snap.activeSceneId, effect: snap.softwareEffect, ramp: snap.ramp?.kind ?? null });
       this.onChange();
     });
   }
@@ -259,7 +268,24 @@ class Light {
    * First connection after start: bring back the scene/effect that was running. The controller itself
    * restores its last static colour or built-in effect; GlowPilot-computed animations need the app.
    */
-  private restoreLook() {
+  /** True while the store has paused GlowPilot (keep the look to resume later). */
+  halted: () => boolean = () => false;
+
+  /** Set by the store: the light was changed by something else (IR remote, another app). */
+  onExternal: ((b: Uint8Array) => void) | null = null;
+
+  /** Mirror a frame sent by someone else into our state, so the app shows what the light really shows. */
+  applyExternal(b: Uint8Array) {
+    if (b.length !== 9 || b[0] !== 0x7e) return;
+    const st = this.controller.state;
+    if (b[2] === 0x05 && b[3] === 0x03) this.controller.state = { ...st, color: { r: b[4], g: b[5], b: b[6] }, controllerEffect: null, on: true };
+    else if (b[2] === 0x04) this.controller.state = { ...st, on: b[3] !== 0 };
+    else if (b[2] === 0x01) this.controller.state = { ...st, brightness: b[3] };
+    else if (b[2] === 0x03) this.controller.state = { ...st, controllerEffect: b[3], on: true };
+    this.engine.publish();
+  }
+
+  restoreLook() {
     const look = load<{ sceneId: string | null; effect: EngineSnapshot['softwareEffect']; ramp: string | null } | null>(`look.${this.device.id}`, null);
     if (!look || !this.controller.state.on || look.ramp === 'alarm') return;
     if (look.sceneId && this.engine.scenes.some((x) => x.id === look.sceneId)) this.engine.exec({ type: 'scene', sceneId: look.sceneId, source: 'schedule' });
@@ -332,6 +358,7 @@ class Store {
       btChooser: null,
       music: { running: false, level: 0 },
       update: null,
+      paused: null,
     };
     this.automation.rules = this.state.rules;
     this.setupMode(settings.mode);
@@ -406,6 +433,13 @@ class Store {
 
   private createLight(device: StoredDevice, transport: BleTransport): Light {
     const light = new Light(device, transport, this.refresh, (dir, b) => this.pushLog(dir, b, light.name));
+    light.halted = () => !!this.state.paused;
+    light.onExternal = (b) => {
+      // Someone used the remote (or another app): stop fighting it.
+      light.engine.halt();
+      light.applyExternal(b);
+      if (!this.state.paused) this.setPaused({ reason: 'remote', at: Date.now() });
+    };
     light.engine.scenes = this.state.scenes;
     light.engine.on('manual', () => {
       if (this.automation.activeRuleId) this.automation.manualOverride(this.state.settings.overrideMinutes);
@@ -616,6 +650,10 @@ class Store {
   /** Run a command on the current target (or an explicit one). */
   exec(cmd: Command, target: Target = this.state.target) {
     if (this.state.mode === 'remote') return this.sendRemote({ t: 'command', cmd, target });
+    // Using GlowPilot again ends a pause (the light follows the newest instruction).
+    const manual = cmd.type !== 'scene' || (cmd.source ?? 'manual') === 'manual';
+    if (this.state.paused && manual) this.setPaused(null);
+    if (this.state.paused) return; // automation waits while paused (schedules like the alarm still run)
     if (cmd.type === 'scene' && (cmd.source ?? 'manual') === 'manual' && this.automation.activeRuleId)
       this.automation.manualOverride(this.state.settings.overrideMinutes);
     if (this.music && (cmd.type === 'power' || cmd.type === 'scene' || cmd.type === 'brightness')) this.stopMusic(false);
@@ -660,6 +698,31 @@ class Store {
   clearOverride() {
     this.automation.clearOverride();
     this.set({});
+  }
+
+  // --- pause: let the remote control the lights ------------------------------------------
+
+  private setPaused(paused: UIState['paused']) {
+    this.set({ paused });
+    desktop?.setPausedInTray?.(!!paused);
+  }
+
+  pause() {
+    this.stopMusic(false);
+    this.lights.forEach((l) => l.engine.halt());
+    this.setPaused({ reason: 'manual', at: Date.now() });
+  }
+
+  /** Give the lights back to GlowPilot: each one resumes the scene/effect it had before the pause. */
+  resume() {
+    this.setPaused(null);
+    this.automation.clearOverride();
+    this.lights.forEach((l) => l.restoreLook());
+  }
+
+  togglePause() {
+    if (this.state.paused) this.resume();
+    else this.pause();
   }
 
   // --- music mode (lives in the store so it survives page changes) ------------------------
@@ -722,6 +785,7 @@ class Store {
 
   private setupDesktop() {
     if (!desktop) return;
+    desktop.onTogglePause?.(() => this.togglePause());
     desktop.onPrepareQuit?.(async () => {
       this.stopMusic();
       await Promise.all(this.lights.map((l) => l.settle()));
@@ -730,7 +794,7 @@ class Store {
     void desktop.updateStatus?.().then((update) => this.set({ update }));
     desktop.onActivity((a) => {
       this.set({ activity: a, foreground: a.foreground });
-      if (!this.state.settings.automationEnabled || this.state.mode === 'remote' || !this.lights.length) return;
+      if (!this.state.settings.automationEnabled || this.state.mode === 'remote' || !this.lights.length || this.state.paused) return;
       const primary = this.lights[0];
       const d = this.automation.evaluate(a, primary.engine.activeSceneId);
       if (d.type === 'activate') {

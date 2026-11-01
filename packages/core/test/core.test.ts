@@ -389,3 +389,32 @@ describe('v0.0.3 features', () => {
     expect(sim.state).toMatchObject({ r: 9, g: 8, b: 7 });
   });
 });
+
+describe('v0.0.7: other controllers of the light', () => {
+  it('reports notifications that do not echo our frames, and halt() stops animating', async () => {
+    const sim = new SimulatorTransport();
+    const c = new DeviceController(sim, elkDriver, { minGapMs: 0 });
+    await c.connect(await c.pick());
+    await c.idle();
+    await new Promise((r) => setTimeout(r, 10));
+    const ext: string[] = [];
+    c.on('external', (b) => ext.push(toHex(b)));
+    c.setColor({ r: 1, g: 2, b: 3 });
+    await c.idle();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(ext).toEqual([]); // our own echo
+    // The IR remote picks green: the controller reports a frame we never sent.
+    (sim as unknown as { notifyCbs: ((b: Uint8Array) => void)[] }).notifyCbs.forEach((cb) => cb(elkDriver.rgb(0, 255, 0).bytes));
+    expect(ext).toEqual([toHex(elkDriver.rgb(0, 255, 0).bytes)]);
+
+    const eng = new GlowEngine(c);
+    eng.scenes = BUILTIN_SCENES;
+    eng.exec({ type: 'scene', sceneId: 'gaming' });
+    expect(eng.effects.running).toBe(true);
+    const n = sim.log.length;
+    eng.halt();
+    expect(eng.snapshot()).toMatchObject({ activeSceneId: null, softwareEffect: null });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(sim.log.length).toBe(n);
+  });
+});

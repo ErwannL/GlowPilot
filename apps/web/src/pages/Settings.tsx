@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { desktop, store, useStore, type Mode, type UpdateInfo } from '../store';
 import { WebBluetoothTransport } from '../transports/webBluetooth';
+import { discoverDesktop } from '../discovery';
 import { CapacitorBleTransport } from '../transports/capacitor';
 import { Badge, Button, Card, Field, inputCls, PageHeader, Toggle } from '../components/ui';
 import { APP_VERSION } from '../components/UpdateBanner';
@@ -50,6 +51,7 @@ export function SettingsPage() {
               <div className="flex gap-2">
                 <input className={inputCls} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="ws://192.168.1.20:47821" />
                 <Button onClick={() => { store.updateSettings({ remoteUrl: url.trim() }); store.connectRemote(); }}>Connect</Button>
+                <Button onClick={async () => { const found = await discoverDesktop(); if (found) { setUrl(found); store.updateSettings({ remoteUrl: found }); store.connectRemote(); } else alert('GlowPilot Desktop not found on this Wi-Fi.'); }}>🔎 Find</Button>
               </div>
             </Field>
             {s.remote.state === 'needsPairing' && (

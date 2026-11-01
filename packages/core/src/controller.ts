@@ -31,6 +31,8 @@ export interface ControllerEvents {
   state: LightState;
   error: string;
   ack: Uint8Array;
+  /** A notification that does not echo anything GlowPilot sent: someone else (IR/RF remote, another app) changed the light. */
+  external: Uint8Array;
 }
 
 export const DEFAULT_STATE: LightState = { on: true, color: { r: 255, g: 120, b: 40 }, brightness: 80, speed: 50, controllerEffect: null };
@@ -52,6 +54,8 @@ export class DeviceController extends Emitter<ControllerEvents> {
   /** Last colour/effect frame written and still waiting for its FFF4 echo. */
   private awaitingEcho: { hex: string; bytes: Uint8Array; retried: boolean; timer: ReturnType<typeof setTimeout> } | null = null;
   resendCount = 0;
+  /** Frames written in the last few seconds, to tell our echoes from changes made elsewhere. */
+  private recentSent: { hex: string; at: number }[] = [];
 
   constructor(
     public transport: BleTransport,
@@ -62,14 +66,20 @@ export class DeviceController extends Emitter<ControllerEvents> {
     this.queue = new CommandQueue(async (b) => {
       // Track before writing: the echo can arrive before write() resolves.
       this.trackEcho(b);
+      this.recentSent.push({ hex: toHex(b), at: Date.now() });
+      if (this.recentSent.length > 200) this.recentSent.splice(0, 100);
       await this.transport.write(b);
     }, opts.minGapMs ?? 40);
     transport.onNotify((b) => {
-      this.lastAckAt = Date.now();
-      if (this.awaitingEcho && toHex(b) === this.awaitingEcho.hex) {
+      const hex = toHex(b);
+      if (this.awaitingEcho && hex === this.awaitingEcho.hex) {
         clearTimeout(this.awaitingEcho.timer);
         this.awaitingEcho = null;
       }
+      const now = Date.now();
+      this.recentSent = this.recentSent.filter((x) => now - x.at < 3000);
+      if (this.lastAckAt && !this.recentSent.some((x) => x.hex === hex)) this.emit('external', b);
+      this.lastAckAt = now;
       this.emit('ack', b);
     });
     transport.onDisconnect(() => this.handleDrop());
@@ -166,6 +176,13 @@ export class DeviceController extends Emitter<ControllerEvents> {
   /** Raw frame for the hardware test mode. */
   sendRaw(bytes: Uint8Array): void {
     this.send({ key: 'raw-' + Math.random(), bytes });
+  }
+
+  /** Drop frames not written yet (e.g. animation frames that would overwrite the IR remote's colour). */
+  cancelPending(): void {
+    this.queue.clear();
+    if (this.awaitingEcho) clearTimeout(this.awaitingEcho.timer);
+    this.awaitingEcho = null;
   }
 
   idle(): Promise<void> {

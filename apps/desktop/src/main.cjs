@@ -91,18 +91,25 @@ function autoConnect() {
   void win.webContents.executeJavaScript('window.__glowpilotAutoconnect && window.__glowpilotAutoconnect()', true).catch(() => {});
 }
 
-function createTray() {
-  const icon = nativeImage.createFromPath(path.join(__dirname, '../assets/tray.png'));
-  tray = new Tray(icon);
-  tray.setToolTip('GlowPilot');
-  tray.setContextMenu(Menu.buildFromTemplate([
+let trayPaused = false;
+function buildTrayMenu() {
+  tray?.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open GlowPilot', click: () => { win?.show(); win?.focus(); } },
+    { label: trayPaused ? 'Resume GlowPilot' : 'Pause GlowPilot (use the remote)', click: () => win?.webContents.send('toggle-pause') },
+    { type: 'separator' },
     { label: 'Lights on', click: () => win?.webContents.send('remote', 'tray', { t: 'command', cmd: { type: 'power', on: true } }) },
     { label: 'Lights off', click: () => win?.webContents.send('remote', 'tray', { t: 'command', cmd: { type: 'power', on: false } }) },
     { label: 'Cinema mode', click: () => win?.webContents.send('remote', 'tray', { t: 'command', cmd: { type: 'scene', sceneId: 'cinema' } }) },
     { type: 'separator' },
     { label: 'Quit', click: () => { quitting = true; app.quit(); } },
   ]));
+  tray?.setToolTip(trayPaused ? 'GlowPilot (paused)' : 'GlowPilot');
+}
+
+function createTray() {
+  const icon = nativeImage.createFromPath(path.join(__dirname, '../assets/tray.png'));
+  tray = new Tray(icon);
+  buildTrayMenu();
   tray.on('click', () => { win?.show(); win?.focus(); });
 }
 
@@ -119,6 +126,7 @@ ipcMain.on('auto-select', (_e, id) => {
   }, 20_500);
 });
 ipcMain.on('autoconnect-again', () => autoConnect());
+ipcMain.on('tray-paused', (_e, p) => { trayPaused = !!p; buildTrayMenu(); });
 ipcMain.on('state', (_e, s) => api.broadcastState(s));
 ipcMain.handle('pairing', () => api.pairingInfo());
 ipcMain.handle('revoke', () => api.revokeAll());

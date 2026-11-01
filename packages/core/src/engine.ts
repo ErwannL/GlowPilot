@@ -219,6 +219,22 @@ export class GlowEngine extends Emitter<EngineEvents> {
     this.publish();
   }
 
+  /**
+   * Stop everything GlowPilot is animating (effects, mixes, ramps, alarm) without sending anything,
+   * so whatever the light shows now (e.g. a colour set with the IR remote) stays.
+   */
+  halt(): void {
+    this.cancelRamp();
+    this.stopMix();
+    this.effects.stop();
+    this.activeSceneId = null;
+    this.activeRule = null;
+    this.controller.cancelPending();
+    if (this.revertHandle) clearTimeout(this.revertHandle);
+    this.revertHandle = null;
+    this.publish();
+  }
+
   /** Wake-up alarm: see alarmAt(). Runs until a manual action or power off. */
   startAlarm(minutes: number, color = '#ff8a30'): void {
     this.cancelRamp();

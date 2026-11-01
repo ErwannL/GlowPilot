@@ -2,6 +2,7 @@ import { colorName, rgbToHex, SOFTWARE_EFFECTS, elkDriver } from '@glowpilot/cor
 import { store, useStore } from '../store';
 import { navigate } from '../App';
 import { Badge, Button, Card, Slider, StatusPill, Toggle } from '../components/ui';
+import { FindDesktopCard } from '../components/FindDesktop';
 
 export function Dashboard() {
   const s = useStore((x) => x);
@@ -22,6 +23,20 @@ export function Dashboard() {
         <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">Your <span className="brand-text">atmosphere</span></h1>
       </div>
 
+      {s.paused && (
+        <Card className="border-amber-400/30">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <div className="font-semibold">⏸ GlowPilot is paused</div>
+              <p className="text-sm text-white/55">{s.paused.reason === 'remote'
+                ? 'The lights were changed with the remote or another app, so GlowPilot stopped its animations and game rules to leave them as they are.'
+                : 'GlowPilot sends nothing to the lights: use the remote freely. Alarms still ring.'}</p>
+            </div>
+            <Button variant="primary" onClick={() => store.resume()}>Resume GlowPilot</Button>
+          </div>
+        </Card>
+      )}
+
       {!s.device && s.mode !== 'remote' && (
         <Card className="border-glow-purple/30">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -33,6 +48,7 @@ export function Dashboard() {
           </div>
         </Card>
       )}
+      {!s.device && s.mode === 'local' && <FindDesktopCard scanFailed={!!s.error} />}
 
       <div className="grid gap-5 lg:grid-cols-[1.3fr_1fr]">
         <Card className="relative overflow-hidden">
@@ -105,6 +121,7 @@ export function Dashboard() {
 
       <Card title="Quick actions">
         <div className="flex flex-wrap gap-2">
+          {!s.paused && s.mode !== 'remote' && <Button onClick={() => store.pause()} title="Stop GlowPilot's animations and rules so the remote keeps control">⏸ Pause (use the remote)</Button>}
           <Button onClick={() => store.exec({ type: 'power', on: !light.on })}>{light.on ? 'Turn off' : 'Turn on'}</Button>
           <Button onClick={() => store.exec({ type: 'scene', sceneId: 'cinema' })}>🎬 Cinema mode</Button>
           <Button onClick={() => store.exec({ type: 'sleepTimer', minutes: 30 })}>💤 Sleep in 30 min</Button>
