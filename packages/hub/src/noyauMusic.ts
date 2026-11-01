@@ -22,7 +22,7 @@ interface Playback {
   server_time: number;
 }
 
-interface Beats { bpm?: number; beats?: number[] }
+interface Beats { bpm?: number | null; beats?: number[]; energy?: [number, number][] }
 
 export class NoyauMusicSync {
   private abort: AbortController | null = null;
@@ -30,6 +30,8 @@ export class NoyauMusicSync {
   private playback: Playback | null = null;
   private receivedAt = 0;
   private beats: number[] = [];
+  /** Loudness every 0.5 s ([t, 0..1]): strong pulses in loud passages, soft ones in calm passages. */
+  private energy: [number, number][] = [];
   private bpm = 120;
   private trackId: number | null = null;
   private beatIndex = 0;
@@ -110,6 +112,7 @@ export class NoyauMusicSync {
     if (id !== this.trackId) {
       this.trackId = id;
       this.beats = [];
+      this.energy = [];
       this.bpm = 120;
       this.beatIndex = 0;
       if (id != null) void this.loadBeats(id, s);
@@ -125,6 +128,7 @@ export class NoyauMusicSync {
       if (this.trackId !== id) return;
       this.beats = (b.beats ?? []).filter((x) => Number.isFinite(x)).sort((a, c) => a - c);
       if (b.bpm && b.bpm > 30 && b.bpm < 260) this.bpm = b.bpm;
+      this.energy = (b.energy ?? []).filter((e) => Array.isArray(e) && Number.isFinite(e[0]) && Number.isFinite(e[1]));
       this.log(`noyau: track ${id}, ${this.beats.length} beats, ${this.bpm} bpm`);
     } catch (e) {
       this.log(`noyau: no beats for track ${id} (${(e as Error).message}), pulsing at ${this.bpm} bpm`);
@@ -165,7 +169,10 @@ export class NoyauMusicSync {
       sinceBeat = pos - n * period;
     }
     // Sharp attack on the beat, quick decay to a glow.
-    const level = sinceBeat < 0 ? 0.25 : 0.25 + 0.75 * Math.exp(-sinceBeat / 0.12);
+    // Loudness here (Noyau samples it every 0.5 s); without data, full strength.
+    const e = this.energy.length ? (this.energy[Math.min(this.energy.length - 1, Math.max(0, Math.round(pos / 0.5)))]?.[1] ?? 1) : 1;
+    const peak = 0.45 + 0.55 * Math.max(0, Math.min(1, e));
+    const level = sinceBeat < 0 ? 0.2 : 0.2 + (peak - 0.2) * Math.exp(-sinceBeat / 0.12);
     const c = colors[this.colorIndex % colors.length];
     this.render({ r: Math.round(c.r * level), g: Math.round(c.g * level), b: Math.round(c.b * level) });
   }
