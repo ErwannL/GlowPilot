@@ -1,6 +1,6 @@
 {
   "name": "@glowpilot/hub",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "GlowPilot Hub: always-on light master for a Linux server (BlueZ), same engine and API as GlowPilot Desktop",
   "type": "module",

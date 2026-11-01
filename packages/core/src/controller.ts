@@ -97,12 +97,37 @@ export class DeviceController extends Emitter<ControllerEvents> {
     return { id: d.id, name, driverId: this.driver.id, calibration: { ...DEFAULT_CALIBRATION, gain: { ...DEFAULT_CALIBRATION.gain } } };
   }
 
-  async connect(device: SavedDevice): Promise<void> {
+  /** Max time for one connection attempt; a hung attempt used to block every later retry. */
+  connectTimeoutMs = 30_000;
+  private inFlight: Promise<void> | null = null;
+
+  /** Connect (or join the attempt already running: concurrent attempts made the link flap). */
+  connect(device: SavedDevice): Promise<void> {
+    if (this.inFlight && this.device?.id === device.id) return this.inFlight;
+    this.inFlight = this.doConnect(device).finally(() => { this.inFlight = null; });
+    return this.inFlight;
+  }
+
+  private async doConnect(device: SavedDevice): Promise<void> {
     this.device = device;
     this.manualDisconnect = false;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     this.setStatus(this.reconnectAttempt ? 'reconnecting' : 'connecting');
     try {
-      await this.transport.connect(device.id, this.driver.service, this.driver.writeCharacteristic, this.driver.notifyCharacteristic);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('Connection attempt timed out')), this.connectTimeoutMs); });
+      try {
+        await Promise.race([
+          this.transport.connect(device.id, this.driver.service, this.driver.writeCharacteristic, this.driver.notifyCharacteristic),
+          timeout,
+        ]);
+      } catch (e) {
+        void this.transport.disconnect().catch(() => {}); // abandon the half-open attempt
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
       this.reconnectAttempt = 0;
       this.setStatus('connected');
       this.queue.resetDedup();
@@ -253,7 +278,7 @@ export class DeviceController extends Emitter<ControllerEvents> {
   }
 
   private handleDrop(): void {
-    if (this.manualDisconnect || !this.device) return;
+    if (this.manualDisconnect || !this.device || this.inFlight) return;
     if (this.autoReconnect) this.scheduleReconnect();
     else this.setStatus('disconnected');
   }

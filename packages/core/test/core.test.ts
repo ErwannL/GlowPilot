@@ -475,3 +475,35 @@ describe('v0.1.0: alarm rhythm and intensity', () => {
     expect(sim.state).toMatchObject({ on: true, r: 255, g: 0, b: 0 });
   });
 });
+
+describe('v0.1.2: reconnection never stalls', () => {
+  it('a hung connection attempt times out and the controller keeps retrying', async () => {
+    vi.useFakeTimers();
+    const sim = new SimulatorTransport();
+    const c = new DeviceController(sim, elkDriver, { minGapMs: 0 });
+    c.connectTimeoutMs = 1000;
+    const d = await c.pick();
+    await c.connect(d);
+    // The controller goes away and the next connect() never answers (what BlueZ did for 2 hours).
+    const realConnect = sim.connect.bind(sim);
+    let hang = true;
+    sim.connect = (...a) => (hang ? new Promise(() => {}) : realConnect(...a));
+    sim.drop();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(c.status).toBe('reconnecting');
+    hang = false;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(c.status).toBe('connected');
+    vi.useRealTimers();
+  });
+  it('concurrent connect calls share one attempt', async () => {
+    const sim = new SimulatorTransport();
+    let calls = 0;
+    const real = sim.connect.bind(sim);
+    sim.connect = (...a) => { calls++; return real(...a); };
+    const c = new DeviceController(sim, elkDriver, { minGapMs: 0 });
+    const d = await c.pick();
+    await Promise.all([c.connect(d), c.connect(d), c.connect(d)]);
+    expect(calls).toBe(1);
+  });
+});

@@ -61,7 +61,9 @@ export class BlueZTransport implements BleTransport {
     const a = await adapter();
     // BlueZ only knows devices it has seen: make sure it is discovering while we wait for this one.
     if (!(await a.isDiscovering())) await a.startDiscovery().catch(() => {});
-    const d = await a.waitDevice(address.toUpperCase(), 20_000);
+    const d = await a.waitDevice(address.toUpperCase(), 20_000).catch(() => {
+      throw new Error('Light not visible: it is probably connected to another device (GlowPilot on a phone/PC, or Lotus Lantern), switched off, or out of range');
+    });
     await a.stopDiscovery().catch(() => {});
     if (!(await d.isConnected())) await d.connect();
     this.device = d;
