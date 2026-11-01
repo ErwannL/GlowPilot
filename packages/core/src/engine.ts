@@ -1,6 +1,6 @@
 import { hexToRgb, mixRgb, type RGB } from './color';
 import { DeviceController, type LightState } from './controller';
-import { alarmAt, EffectRunner, realClock, type Clock, type SoftwareEffect } from './effects';
+import { alarmAt, EffectRunner, realClock, type AlarmCurve, type Clock, type SoftwareEffect } from './effects';
 import { Emitter } from './emitter';
 import { playableSteps, sceneRgb, stepScene, type Scene, type SceneStep } from './scenes';
 import { dueSchedules, rampLevel, type Schedule } from './schedule';
@@ -235,21 +235,33 @@ export class GlowEngine extends Emitter<EngineEvents> {
     this.publish();
   }
 
+  /** Stop a ringing alarm (from the phone's Stop button): lights stay on, steady, in the alarm colour. */
+  stopAlarm(): void {
+    if (this.ramp?.kind !== 'alarm') return;
+    const color = this.alarmColor;
+    this.cancelRamp();
+    if (color) this.controller.setColor(color);
+    this.publish();
+  }
+
+  private alarmColor: RGB | null = null;
+
   /** Wake-up alarm: see alarmAt(). Runs until a manual action or power off. */
-  startAlarm(minutes: number, color = '#ff8a30'): void {
+  startAlarm(minutes: number, color = '#ff8a30', curve: AlarmCurve = {}): void {
     this.cancelRamp();
     this.stopMix();
     this.effects.stop();
     this.activeSceneId = null;
     const c = this.controller;
     const rgb = hexToRgb(color) ?? { r: 255, g: 138, b: 48 };
+    this.alarmColor = rgb;
     c.setPower(true);
     c.setBrightness(100);
     const total = minutes * 60_000;
     const start = this.clock.now();
     this.ramp = { kind: 'alarm', endsAt: start + total };
     this.rampHandle = this.clock.setInterval(() => {
-      const { level, on } = alarmAt(this.clock.now() - start, total);
+      const { level, on } = alarmAt(this.clock.now() - start, total, curve);
       c.renderFrame(on ? { r: Math.round(rgb.r * level), g: Math.round(rgb.g * level), b: Math.round(rgb.b * level) } : { r: 0, g: 0, b: 0 });
     }, 100);
     this.publish();
@@ -287,7 +299,7 @@ export class GlowEngine extends Emitter<EngineEvents> {
     else if (a.type === 'scene') this.exec({ type: 'scene', sceneId: a.sceneId, source: 'schedule' });
     else if (a.type === 'sunrise') this.startRamp('sunrise', a.minutes, a.brightness, a.color);
     else if (a.type === 'sunset') this.startRamp('sunset', a.minutes);
-    else if (a.type === 'alarm') this.startAlarm(a.minutes, a.color);
+    else if (a.type === 'alarm') this.startAlarm(a.minutes, a.color, a);
   }
 
   publish(): void {

@@ -444,3 +444,34 @@ describe('v0.0.9: phone alarm sync', () => {
     expect(wakeTimes([s], new Date(2026, 10, 1))[0].once).toBe('2026-11-03T06:12:00');
   });
 });
+
+describe('v0.1.0: alarm rhythm and intensity', () => {
+  const total = 10 * 60_000;
+  it('respects start/end brightness and the no-flash build-up', () => {
+    expect(alarmAt(0, total, { startBrightness: 10, endBrightness: 60 }).level).toBeCloseTo(0.1);
+    expect(alarmAt(total - 1, total, { startBrightness: 10, endBrightness: 60 }).level).toBeCloseTo(0.6, 2);
+    const ons = Array.from({ length: 100 }, (_, i) => alarmAt(total * 0.9 + i * 50, total, { flashDuringBuildup: false }).on);
+    expect(ons.every(Boolean)).toBe(true);
+  });
+  it('blink rhythm follows the chosen speed and can accelerate', () => {
+    const changes = (from: number, c: object) => { let n = 0, last: boolean | null = null; for (let t = 0; t < 10_000; t += 10) { const on = alarmAt(from + t, total, c).on; if (on !== last) n++; last = on; } return n; };
+    const slow = changes(total, { rhythm: 'blink', blinkSpeed: 0, accelerate: false });
+    const fast = changes(total, { rhythm: 'blink', blinkSpeed: 100, accelerate: false });
+    expect(slow).toBeLessThan(fast);
+    const later = changes(total + 300_000, { rhythm: 'blink', blinkSpeed: 0, accelerate: true });
+    expect(later).toBeGreaterThan(slow * 2);
+  });
+  it('stopAlarm leaves the light steady in the alarm colour', async () => {
+    const sim = new SimulatorTransport();
+    const c = new DeviceController(sim, elkDriver, { minGapMs: 0 });
+    const d = await c.pick();
+    d.calibration = IDENTITY_CALIBRATION;
+    await c.connect(d);
+    const eng = new GlowEngine(c);
+    eng.startAlarm(1, '#ff0000', { rhythm: 'blink' });
+    eng.stopAlarm();
+    await c.idle();
+    expect(eng.snapshot().ramp).toBeNull();
+    expect(sim.state).toMatchObject({ on: true, r: 255, g: 0, b: 0 });
+  });
+});

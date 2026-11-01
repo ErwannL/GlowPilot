@@ -163,7 +163,9 @@ function PhoneAlarmCard() {
   const pa = s.phoneAlarm;
   const fmt = (t: number | null | undefined) => (t ? new Date(t).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
   return (
-    <Card title="Wake-up lights with my phone alarm" action={<Toggle on={st.phoneAlarmSync} onChange={(phoneAlarmSync) => store.updateSettings({ phoneAlarmSync })} />}>
+    <>
+    <AlarmReadiness />
+    <Card title="Optional: follow my Clock app alarm" action={<Toggle on={st.phoneAlarmSync} onChange={(phoneAlarmSync) => store.updateSettings({ phoneAlarmSync })} />}>
       <div className="space-y-3 text-sm text-white/60">
         <p>The lights start before the alarm of your Clock app, build up, and flash when it rings. <b>No need to keep GlowPilot open</b>: Android wakes it at the right time, even locked, like the Clock app.</p>
         <p>At that moment the phone first asks your PC. If the PC is on and connected to the lights, the PC does it. If the PC is asleep, off or unreachable, the phone connects to the lights and does it itself.</p>
@@ -186,6 +188,42 @@ function PhoneAlarmCard() {
           <div className="flex flex-wrap items-center gap-2 text-orange-200">Android needs your OK for exact alarms.<Button onClick={() => void GlowAlarm.openExactAlarmSettings()}>Allow</Button></div>
         )}
         <Button onClick={() => void GlowAlarm.stop()}>Stop a ringing light alarm</Button>
+      </div>
+    </Card>
+    </>
+  );
+}
+
+/**
+ * What GlowPilot's own alarm clock can do on this phone. Only reads the state: nothing is requested
+ * unless you tap a button, so the app never nags on start and never asks anything in the morning.
+ */
+function AlarmReadiness() {
+  const [c, setC] = useState<{ exact: boolean; bluetooth: boolean; notifications: boolean; fullScreen: boolean; microphone: boolean } | null>(null);
+  const refresh = () => void GlowAlarm.capabilities().then(setC).catch(() => {});
+  useEffect(() => {
+    refresh();
+    const h = () => document.visibilityState === 'visible' && refresh();
+    document.addEventListener('visibilitychange', h);
+    return () => document.removeEventListener('visibilitychange', h);
+  }, []);
+  if (!c) return null;
+  const rows: { ok: boolean; label: string; fix?: () => void }[] = [
+    { ok: c.exact, label: 'Rings exactly on time', fix: () => void GlowAlarm.openExactAlarmSettings() },
+    { ok: c.fullScreen, label: 'Alarm screen over the lock screen', fix: () => void GlowAlarm.openFullScreenSettings() },
+    { ok: c.notifications, label: 'Notification with Stop / Snooze', fix: () => void GlowAlarm.ensurePermissions().then(refresh) },
+    { ok: c.bluetooth, label: 'Lights without the PC (Bluetooth)', fix: () => void GlowAlarm.ensurePermissions().then(refresh) },
+  ];
+  return (
+    <Card title="⏰ GlowPilot alarm clock on this phone">
+      <p className="mb-3 text-sm text-white/55">Create alarms in <a className="underline" href="#schedules">Schedules</a> → Wake-up alarm: your music, your light rhythm, Snooze and Stop. Android wakes GlowPilot at the right time even when the phone is locked; the PC handles the lights if it is awake, otherwise the phone does.</p>
+      <div className="space-y-1.5 text-sm">
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-center justify-between gap-2 rounded-xl bg-white/5 px-3 py-2">
+            <span>{r.ok ? '✅' : '⚠️'} {r.label}</span>
+            {!r.ok && r.fix && <Button onClick={r.fix}>Allow</Button>}
+          </div>
+        ))}
       </div>
     </Card>
   );

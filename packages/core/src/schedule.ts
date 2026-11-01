@@ -11,8 +11,38 @@ export type ScheduleAction =
   | { type: 'sunrise'; minutes: number; brightness: number; color: string }
   /** Gradually dim to off over `minutes`, starting at the trigger time. */
   | { type: 'sunset'; minutes: number }
-  /** Wake-up alarm: starts at the trigger time, builds up for `minutes`, then keeps flashing until turned off. */
-  | { type: 'alarm'; minutes: number; color: string };
+  /**
+   * Wake-up alarm: lights start at the trigger time and build up for `minutes`; then it "rings"
+   * (music on the phone, light rhythm) until stopped. Older alarms only have minutes + color.
+   */
+  | ({ type: 'alarm'; minutes: number; color: string } & AlarmOptions);
+
+/** How a wake-up alarm looks and sounds. Every field is optional (defaults in ALARM_DEFAULTS). */
+export interface AlarmOptions {
+  /** After the build-up: 'flash' = flashes faster and faster (classic), 'blink' = steady rhythm you choose, 'music' = pulses with the music (phone). */
+  rhythm?: 'flash' | 'blink' | 'music';
+  /** 0–100: speed of the 'blink' rhythm. */
+  blinkSpeed?: number;
+  /** 'blink' rhythm gets faster over 5 minutes. */
+  accelerate?: boolean;
+  /** Brightness at the start and at the end of the build-up, 0–100. */
+  startBrightness?: number;
+  endBrightness?: number;
+  /** Flash already during the second half of the build-up (classic behaviour). */
+  flashDuringBuildup?: boolean;
+  /** Phone only. null uri = default Android alarm sound; undefined sound = silent. */
+  sound?: { uri: string | null; name: string } | null;
+  /** Max volume 0–100 and how long the volume takes to rise. */
+  volume?: number;
+  soundRampSec?: number;
+  vibrate?: boolean;
+  snoozeMin?: number;
+}
+
+export const ALARM_DEFAULTS: Required<Omit<AlarmOptions, 'sound'>> = {
+  rhythm: 'flash', blinkSpeed: 50, accelerate: true, startBrightness: 2, endBrightness: 100, flashDuringBuildup: true,
+  volume: 80, soundRampSec: 60, vibrate: true, snoozeMin: 9,
+};
 
 export interface Schedule {
   id: string;

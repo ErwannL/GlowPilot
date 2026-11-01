@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { DAY_LABELS, describeSchedule, newId, nextRun, type Schedule, type ScheduleAction } from '@glowpilot/core';
 import { desktop, store, useStore } from '../store';
 import { Badge, Button, Card, Field, inputCls, Modal, PageHeader, Toggle } from '../components/ui';
+import { AlarmEditor } from '../components/AlarmEditor';
 
 export function Schedules() {
   const s = useStore((x) => x);
@@ -89,7 +90,7 @@ function ScheduleEditor({ value, scenes, groups, onClose, onSave, onDelete }: {
         <Field label="Action">
           <select className={inputCls} value={a.type} onChange={(e) => setAction(e.target.value as ScheduleAction['type'])}>
             <option value="on">Turn on</option><option value="off">Turn off</option><option value="scene">Activate a scene</option>
-            <option value="alarm">Wake-up alarm (builds up, then flashes until you turn it off)</option>
+            <option value="alarm">⏰ Wake-up alarm (lights, then music, Snooze / Stop)</option>
             <option value="sunrise">Sunrise (gradual wake-up)</option><option value="sunset">Sunset (gradual fade-out)</option>
           </select>
         </Field>
@@ -97,14 +98,7 @@ function ScheduleEditor({ value, scenes, groups, onClose, onSave, onDelete }: {
           <Field label="Scene"><select className={inputCls} value={a.sceneId} onChange={(e) => setV({ ...v, action: { ...a, sceneId: e.target.value } })}>
             {scenes.map((s) => <option key={s.id} value={s.id}>{s.icon} {s.name}</option>)}</select></Field>
         )}
-        {a.type === 'alarm' && (
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Build-up (minutes)" hint="Starts dim at the time above, gets brighter, flashes faster and faster, then keeps flashing until you turn the lights off.">
-              <input type="number" min={1} max={180} className={inputCls} value={a.minutes} onChange={(e) => setV({ ...v, action: { ...a, minutes: Math.max(1, +e.target.value) } })} />
-            </Field>
-            <Field label="Colour"><input type="color" className="h-11 w-full rounded-xl bg-transparent" value={a.color} onChange={(e) => setV({ ...v, action: { ...a, color: e.target.value } })} /></Field>
-          </div>
-        )}
+        {a.type === 'alarm' && <AlarmEditor a={a} time={v.time} onChange={(na) => setV({ ...v, action: na })} />}
         {(a.type === 'sunrise' || a.type === 'sunset') && (
           <Field label="Duration (minutes)"><input type="number" min={1} max={120} className={inputCls} value={a.minutes} onChange={(e) => setV({ ...v, action: { ...a, minutes: Math.max(1, +e.target.value) } })} /></Field>
         )}

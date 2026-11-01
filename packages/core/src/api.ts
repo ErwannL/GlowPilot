@@ -21,7 +21,9 @@ export type ClientMessage =
   | { t: 'requestOwnership' }
   | { t: 'releaseOwnership' }
   /** From the phone (HTTP /api/phone-alarm): start a light alarm at `at` (ms), or remove it (null). */
-  | { t: 'phoneAlarm'; at: number | null; minutes: number; color: string };
+  | { t: 'phoneAlarm'; at: number | null; minutes: number; color: string }
+  /** From the phone's Stop button (HTTP /api/alarm-stop): stop ringing lights, leave them steady. */
+  | { t: 'alarmStop' };
 
 export interface RemoteState {
   snapshot: EngineSnapshot;
@@ -52,5 +54,5 @@ export type ServerMessage =
 
 export function isClientMessage(v: unknown): v is ClientMessage {
   const t = (v as { t?: unknown })?.t;
-  return typeof t === 'string' && ['pair', 'auth', 'command', 'saveScenes', 'saveRules', 'saveSchedules', 'requestOwnership', 'releaseOwnership', 'phoneAlarm'].includes(t);
+  return typeof t === 'string' && ['pair', 'auth', 'command', 'saveScenes', 'saveRules', 'saveSchedules', 'requestOwnership', 'releaseOwnership', 'phoneAlarm', 'alarmStop'].includes(t);
 }

@@ -107,11 +107,31 @@ function horrorAt(colors: RGB[], t: number, speed: number): RGB {
  * Wake-up alarm intensity. Brightens from almost off to full over `totalMs`; flashing starts
  * halfway and speeds up; after the build-up it keeps flashing until someone turns it off.
  */
-export function alarmAt(elapsedMs: number, totalMs: number): { level: number; on: boolean } {
+export interface AlarmCurve {
+  rhythm?: 'flash' | 'blink' | 'music';
+  blinkSpeed?: number;
+  accelerate?: boolean;
+  startBrightness?: number;
+  endBrightness?: number;
+  flashDuringBuildup?: boolean;
+}
+
+/** Blink half-period in ms for a 0–100 speed: 1000 ms (slow) … 120 ms (fast). */
+export const blinkHalfPeriod = (speed: number) => Math.round(1000 - 880 * Math.max(0, Math.min(100, speed)) / 100);
+
+export function alarmAt(elapsedMs: number, totalMs: number, c: AlarmCurve = {}): { level: number; on: boolean } {
   const f = totalMs > 0 ? elapsedMs / totalMs : 1;
-  if (f >= 1) return { level: 1, on: elapsedMs % 400 < 200 };
-  const level = 0.02 + 0.98 * f * f;
-  if (f < 0.5) return { level, on: true };
+  const lo = (c.startBrightness ?? 2) / 100, hi = (c.endBrightness ?? 100) / 100;
+  if (f >= 1) {
+    const rhythm = c.rhythm ?? 'flash';
+    if (rhythm === 'flash') return { level: hi, on: elapsedMs % 400 < 200 };
+    // 'blink' (and 'music' where no audio is available, e.g. on the PC): chosen rhythm, optionally accelerating over 5 min.
+    let half = blinkHalfPeriod(c.blinkSpeed ?? 50);
+    if (c.accelerate ?? true) half = Math.max(80, half * (1 - 0.7 * Math.min(1, (elapsedMs - totalMs) / 300_000)));
+    return { level: hi, on: (elapsedMs - totalMs) % (half * 2) < half };
+  }
+  const level = lo + (hi - lo) * f * f;
+  if (f < 0.5 || c.flashDuringBuildup === false) return { level, on: true };
   const period = 4000 - 3400 * ((f - 0.5) / 0.5);
   return { level, on: elapsedMs % period < period * 0.6 };
 }

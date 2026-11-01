@@ -904,6 +904,7 @@ class Store {
       else if (msg.t === 'saveScenes') this.saveScenes(msg.scenes);
       else if (msg.t === 'saveRules') this.saveRules(msg.rules);
       else if (msg.t === 'saveSchedules') this.saveSchedules(msg.schedules);
+      else if (msg.t === 'alarmStop') this.lights.forEach((l) => l.engine.stopAlarm());
       else if (msg.t === 'phoneAlarm') {
         const rest = this.state.schedules.filter((x) => x.id !== 'phone-alarm');
         this.saveSchedules(msg.at == null ? rest : [...rest, {

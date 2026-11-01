@@ -143,6 +143,10 @@ class LocalApiServer {
       });
       return;
     }
+    if (req.method === 'POST' && urlPath === '/api/alarm-stop') {
+      this.opts.onMessage(client.name, { t: 'alarmStop' });
+      return json(200, { ok: true });
+    }
     return json(404, { error: 'unknown endpoint' });
   }
 

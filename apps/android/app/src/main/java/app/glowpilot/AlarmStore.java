@@ -129,7 +129,12 @@ public final class AlarmStore {
             if (at <= 0) continue;
             PendingIntent pi = firePending(ctx, a.optString("id"), a);
             boolean exact = Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms();
-            if (exact) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
+            boolean own = !PHONE_ALARM_ID.equals(a.optString("id"));
+            if (exact && own) {
+                // GlowPilot's own alarm clock: highest priority (like the Clock app), ⏰ icon in the status bar.
+                PendingIntent show = PendingIntent.getActivity(ctx, 7, new Intent(ctx, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
+                am.setAlarmClock(new AlarmManager.AlarmClockInfo(at, show), pi);
+            } else if (exact) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
             else am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
             nowArmed.put(a.optString("id"));
             if (soonest == 0 || at < soonest) soonest = at;

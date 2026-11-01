@@ -1,6 +1,6 @@
 {
   "name": "@glowpilot/desktop",
-  "version": "0.0.9",
+  "version": "0.1.0",
   "private": true,
   "description": "GlowPilot for Windows: BLE controller, app automation and local API",
   "main": "src/main.cjs",
