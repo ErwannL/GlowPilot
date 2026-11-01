@@ -178,6 +178,15 @@ export class DeviceController extends Emitter<ControllerEvents> {
     this.send({ key: 'raw-' + Math.random(), bytes });
   }
 
+  /** Reconnect right away (e.g. the PC just woke up), skipping the remaining backoff delay. */
+  reconnectNow(): void {
+    if (!this.device || this.manualDisconnect || this.status === 'connected' || this.status === 'connecting') return;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.reconnectAttempt = 0;
+    this.connect(this.device).catch(() => {});
+  }
+
   /** Drop frames not written yet (e.g. animation frames that would overwrite the IR remote's colour). */
   cancelPending(): void {
     this.queue.clear();

@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import {
   API_PORT, AutomationEngine, BUILTIN_SCENES, DEFAULT_CALIBRATION, DEFAULT_STATE, DeviceController, elkDriver, EXAMPLE_RULES,
-  GlowEngine, newId, RETIRED_RULE_PROCESSES, SimulatorTransport, toHex,
+  GlowEngine, newId, RETIRED_RULE_PROCESSES, SimulatorTransport, toHex, wakeTimes, type WakeTime,
   type ActivitySnapshot, type AutomationRule, type BleTransport, type Calibration, type ClientMessage, type Command,
   type ConnectionStatus, type EngineSnapshot, type RemoteState, type SavedDevice, type Scene, type Schedule,
   type ServerMessage, type SimulatedStripState,
@@ -31,6 +31,12 @@ export interface DesktopBridge {
   /** Tray menu "Pause GlowPilot / Resume GlowPilot". */
   onTogglePause?(cb: () => void): void;
   setPausedInTray?(paused: boolean): void;
+  /** 'suspend' just before Windows sleeps, 'resume' after it wakes. */
+  onPower?(cb: (what: 'suspend' | 'resume') => void): void;
+  /** Windows scheduled tasks that wake the PC before alarms. */
+  setWakeTasks?(wakes: WakeTime[]): void;
+  /** Stop Windows from sleeping while an alarm/sunrise runs. */
+  setKeepAwake?(on: boolean): void;
   onUpdate?(cb: (info: UpdateInfo) => void): void;
   installUpdate?(): void;
   checkForUpdates?(): void;
@@ -241,8 +247,9 @@ class Light {
       this.status = s;
       if (s === 'connected') {
         this.error = null;
-        if (!this.restored) {
+        if (!this.restored || this.settledForSleep) {
           this.restored = true;
+          this.settledForSleep = false;
           this.restoreLook();
         }
       }
@@ -263,6 +270,8 @@ class Light {
   }
 
   private restored = false;
+  /** Set when the animation was replaced by a steady colour before Windows went to sleep. */
+  settledForSleep = false;
 
   /**
    * First connection after start: bring back the scene/effect that was running. The controller itself
@@ -364,6 +373,7 @@ class Store {
     this.setupMode(settings.mode);
     this.setupDesktop();
     window.__glowpilotAutoconnect = () => void this.autoconnectNext();
+    this.syncWakeTasks();
   }
 
   subscribe = (cb: () => void) => {
@@ -381,6 +391,7 @@ class Store {
   private refresh = () => {
     if (this.state.mode === 'remote') return;
     const lights = this.lights.map((l) => l.view());
+    this.updateKeepAwake();
     const primary = this.targetLights()[0] ?? this.lights[0];
     this.set({
       lights,
@@ -686,6 +697,7 @@ class Store {
   saveSchedules(schedules: Schedule[]) {
     save('schedules', schedules);
     this.set({ schedules });
+    this.syncWakeTasks();
     if (this.state.mode === 'remote') this.sendRemote({ t: 'saveSchedules', schedules });
   }
 
@@ -698,6 +710,21 @@ class Store {
   clearOverride() {
     this.automation.clearOverride();
     this.set({});
+  }
+
+  /** Desktop: wake the PC from sleep a few minutes before each alarm / sunrise / scheduled scene. */
+  syncWakeTasks() {
+    if (!desktop?.setWakeTasks || this.state.mode === 'remote') return;
+    desktop.setWakeTasks(wakeTimes(this.state.schedules, new Date()));
+  }
+
+  private keepAwake = false;
+  /** Desktop: an alarm or sunrise must not be cut short by Windows going back to sleep. */
+  private updateKeepAwake() {
+    const on = this.lights.some((l) => l.snapshot.ramp != null);
+    if (on === this.keepAwake) return;
+    this.keepAwake = on;
+    desktop?.setKeepAwake?.(on);
   }
 
   // --- pause: let the remote control the lights ------------------------------------------
@@ -786,6 +813,21 @@ class Store {
   private setupDesktop() {
     if (!desktop) return;
     desktop.onTogglePause?.(() => this.togglePause());
+    desktop.onPower?.((what) => {
+      if (what === 'suspend') {
+        // Best effort: Windows gives little time before the Bluetooth radio goes down.
+        this.lights.forEach((l) => {
+          if (l.engine.effects.running) l.settledForSleep = true;
+          void l.settle();
+        });
+      } else {
+        // Give the Bluetooth adapter a moment to come back, then reconnect without waiting for the backoff.
+        setTimeout(() => {
+          this.lights.forEach((l) => l.controller.reconnectNow());
+          if (this.lights.some((l) => l.status !== 'connected' && l.device.chooserId)) desktop.requestAutoconnect?.();
+        }, 2500);
+      }
+    });
     desktop.onPrepareQuit?.(async () => {
       this.stopMusic();
       await Promise.all(this.lights.map((l) => l.settle()));

@@ -81,3 +81,42 @@ export function describeSchedule(s: Schedule): string {
     : a.type === 'sunrise' ? `Sunrise (${a.minutes} min)` : a.type === 'alarm' ? `Wake-up alarm (${a.minutes} min build-up)` : `Fade out (${a.minutes} min)`;
   return `${what} · ${s.time} · ${days}`;
 }
+
+export interface WakeTime {
+  id: string;
+  name: string;
+  /** "HH:MM" local, for repeating schedules. */
+  time: string;
+  /** 0 = Sunday … 6 = Saturday (already shifted if waking crosses midnight). */
+  days: number[];
+  /** Local "YYYY-MM-DDTHH:MM:SS" for one-shot schedules. */
+  once?: string;
+}
+
+const pad = (n: number) => String(n).padStart(2, '0');
+
+/**
+ * When the PC must wake up so GlowPilot can run schedules that turn lights on
+ * (alarm, sunrise, on, scene): `marginMin` minutes before the action starts.
+ */
+export function wakeTimes(list: Schedule[], now: Date, marginMin = 3): WakeTime[] {
+  const out: WakeTime[] = [];
+  for (const s of list) {
+    if (!s.enabled || s.action.type === 'off' || s.action.type === 'sunset') continue;
+    const t = parseTime(s.time);
+    if (!t) continue;
+    const before = leadMinutes(s.action) + marginMin;
+    if (!s.days.length) {
+      const n = nextRun(s, now);
+      if (!n) continue;
+      const w = new Date(n.getTime() - marginMin * 60_000);
+      out.push({ id: s.id, name: s.name, time: '', days: [], once: `${w.getFullYear()}-${pad(w.getMonth() + 1)}-${pad(w.getDate())}T${pad(w.getHours())}:${pad(w.getMinutes())}:00` });
+      continue;
+    }
+    let mins = t.h * 60 + t.m - before;
+    let shift = 0;
+    while (mins < 0) { mins += 1440; shift -= 1; }
+    out.push({ id: s.id, name: s.name, time: `${pad(Math.floor(mins / 60))}:${pad(mins % 60)}`, days: s.days.map((d) => (d + shift + 7) % 7).sort() });
+  }
+  return out;
+}

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   applyCalibration, AutomationEngine, colorName, CommandQueue, DeviceController, effectColorAt, elkDriver,
   EXAMPLE_RULES, exportScenes, findConflicts, GlowEngine, hexToRgb, hsvToRgb, IDENTITY_CALIBRATION, importScenes,
-  kelvinToRgb, nextRun, pickRule, rampLevel, alarmAt, playableSteps, rgbToHex, rgbToHsv, BUILTIN_SCENES, SimulatorTransport, toHex,
+  kelvinToRgb, nextRun, pickRule, rampLevel, alarmAt, playableSteps, wakeTimes, rgbToHex, rgbToHsv, BUILTIN_SCENES, SimulatorTransport, toHex,
   type AutomationRule, type Schedule,
 } from '../src';
 
@@ -416,5 +416,20 @@ describe('v0.0.7: other controllers of the light', () => {
     expect(eng.snapshot()).toMatchObject({ activeSceneId: null, softwareEffect: null });
     await new Promise((r) => setTimeout(r, 300));
     expect(sim.log.length).toBe(n);
+  });
+});
+
+describe('v0.0.8: wake the PC for alarms', () => {
+  const base: Schedule = { id: 'w', name: 'Wake-up alarm', enabled: true, time: '06:00', days: [1, 2, 3, 4, 5], action: { type: 'alarm', minutes: 60, color: '#ff8a30' } };
+  it('wakes 3 minutes before alarms, before the sunrise lead, never for off/sunset', () => {
+    expect(wakeTimes([base], new Date(2026, 10, 1))).toEqual([{ id: 'w', name: 'Wake-up alarm', time: '05:57', days: [1, 2, 3, 4, 5] }]);
+    const sunrise: Schedule = { ...base, id: 's', time: '07:00', action: { type: 'sunrise', minutes: 20, brightness: 90, color: '#ffa860' } };
+    expect(wakeTimes([sunrise], new Date())[0].time).toBe('06:37');
+    expect(wakeTimes([{ ...base, action: { type: 'off' } }, { ...base, action: { type: 'sunset', minutes: 5 } }, { ...base, enabled: false }], new Date())).toEqual([]);
+  });
+  it('shifts the day when waking crosses midnight, and handles one-shots', () => {
+    expect(wakeTimes([{ ...base, time: '00:01', days: [1] }], new Date())[0]).toMatchObject({ time: '23:58', days: [0] });
+    const once = wakeTimes([{ ...base, days: [], time: '06:00' }], new Date(2026, 10, 1, 12, 0));
+    expect(once[0].once).toBe('2026-11-02T05:57:00');
   });
 });

@@ -2,13 +2,14 @@
 // The renderer (the shared web UI) owns the BLE link through Chromium's Web Bluetooth,
 // so Windows, Android and the browser run the same protocol code. Main adds:
 // device chooser handling, app/process detection, the local API, tray and autostart.
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell, powerMonitor } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { LocalApiServer } = require('./server.cjs');
 const { ActivityWatcher } = require('./activity.cjs');
 const { setupAutoUpdate, consumeRelaunchHidden } = require('./updater.cjs');
 const { scanSteamGames } = require('./steam.cjs');
+const { syncWakeTasks, keepAwake } = require('./power.cjs');
 
 const API_PORT = Number(process.env.GLOWPILOT_PORT || 47821);
 const WEB_DIST = app.isPackaged ? path.join(process.resourcesPath, 'web') : path.resolve(__dirname, '../../web/dist');
@@ -126,6 +127,8 @@ ipcMain.on('auto-select', (_e, id) => {
   }, 20_500);
 });
 ipcMain.on('autoconnect-again', () => autoConnect());
+ipcMain.on('wake-tasks', (_e, wakes) => syncWakeTasks(Array.isArray(wakes) ? wakes.slice(0, 50) : [], (m) => console.log(m)));
+ipcMain.on('keep-awake', (_e, on) => keepAwake(!!on));
 ipcMain.on('tray-paused', (_e, p) => { trayPaused = !!p; buildTrayMenu(); });
 ipcMain.on('state', (_e, s) => api.broadcastState(s));
 ipcMain.handle('pairing', () => api.pairingInfo());
@@ -142,6 +145,10 @@ app.whenReady().then(() => {
   try { api.start(); } catch (e) { console.error('Local API failed to start', e); }
   watcher.start();
   setupAutoUpdate(() => win, () => { quitting = true; });
+  // Sleep: leave the lights on a steady colour (the BLE link drops and animations would freeze on a random frame).
+  // Wake: reconnect right away instead of waiting for the next retry.
+  powerMonitor.on('suspend', () => win?.webContents.send('power', 'suspend'));
+  powerMonitor.on('resume', () => win?.webContents.send('power', 'resume'));
 });
 
 // On a real quit, let the renderer leave every light on a steady colour (an animation computed by
