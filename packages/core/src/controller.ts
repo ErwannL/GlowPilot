@@ -54,6 +54,13 @@ export class DeviceController extends Emitter<ControllerEvents> {
   /** Last colour/effect frame written and still waiting for its FFF4 echo. */
   private awaitingEcho: { hex: string; bytes: Uint8Array; retried: boolean; timer: ReturnType<typeof setTimeout> } | null = null;
   resendCount = 0;
+  private writeFailures = 0;
+  private lastWriteAt = 0;
+  private connectedAt = 0;
+  private watchdog: ReturnType<typeof setInterval>;
+  /** No echo for this long while sending = dead link (the controller echoes every frame on FFF4). */
+  livenessMs = 8000;
+  zombieCount = 0;
   /** Frames written in the last few seconds, to tell our echoes from changes made elsewhere. */
   private recentSent: { hex: string; at: number }[] = [];
 
@@ -68,8 +75,18 @@ export class DeviceController extends Emitter<ControllerEvents> {
       this.trackEcho(b);
       this.recentSent.push({ hex: toHex(b), at: Date.now() });
       if (this.recentSent.length > 200) this.recentSent.splice(0, 100);
-      await this.transport.write(b);
+      try {
+        await this.transport.write(b);
+        this.writeFailures = 0;
+        this.lastWriteAt = Date.now();
+      } catch (e) {
+        // A write that keeps failing means the link is gone even if no disconnect event came.
+        if (++this.writeFailures >= 3 && this.status === 'connected') this.linkLost('writes failing');
+        throw e;
+      }
     }, opts.minGapMs ?? 40);
+    this.watchdog = setInterval(() => this.checkLiveness(), 4000);
+    (this.watchdog as { unref?: () => void }).unref?.();
     transport.onNotify((b) => {
       const hex = toHex(b);
       if (this.awaitingEcho && hex === this.awaitingEcho.hex) {
@@ -129,6 +146,9 @@ export class DeviceController extends Emitter<ControllerEvents> {
         clearTimeout(timer);
       }
       this.reconnectAttempt = 0;
+      this.writeFailures = 0;
+      this.lastAckAt = 0;
+      this.connectedAt = Date.now();
       this.setStatus('connected');
       this.queue.resetDedup();
       this.pushAll();
@@ -201,6 +221,34 @@ export class DeviceController extends Emitter<ControllerEvents> {
   /** Raw frame for the hardware test mode. */
   sendRaw(bytes: Uint8Array): void {
     this.send({ key: 'raw-' + Math.random(), bytes });
+  }
+
+  /**
+   * Zombie links: BlueZ sometimes forgets a device without telling us, so writes "succeed" into the void
+   * and the light freezes. This controller echoes every frame: frames going out with no echo coming back
+   * means the link is dead → drop it and reconnect.
+   */
+  private checkLiveness(): void {
+    if (this.status !== 'connected' || !this.driver.caps(this.device?.name ?? '').echoAck) return;
+    // Only judge a link whose echo has worked: some stacks (BlueZ here) don't deliver the notifications at all.
+    if (this.lastAckAt === 0) return;
+    if (this.lastWriteAt - this.lastAckAt > this.livenessMs) {
+      this.zombieCount++;
+      this.linkLost('no echo from the controller');
+    }
+  }
+
+  private linkLost(reason: string): void {
+    this.emit('error', `Link lost (${reason}), reconnecting`);
+    this.queue.clear();
+    void this.transport.disconnect().catch(() => {});
+    this.handleDrop();
+  }
+
+  /** Stop background timers (tests, removed lights). */
+  dispose(): void {
+    clearInterval(this.watchdog);
+    void this.disconnect();
   }
 
   /** Reconnect right away (e.g. the PC just woke up), skipping the remaining backoff delay. */

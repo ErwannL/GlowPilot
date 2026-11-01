@@ -59,13 +59,26 @@ export class BlueZTransport implements BleTransport {
 
   async connect(address: string, service: string, writeChar: string, notifyChar?: string): Promise<void> {
     const a = await adapter();
-    // BlueZ only knows devices it has seen: make sure it is discovering while we wait for this one.
-    if (!(await a.isDiscovering())) await a.startDiscovery().catch(() => {});
-    const d = await a.waitDevice(address.toUpperCase(), 20_000).catch(() => {
-      throw new Error('Light not visible: it is probably connected to another device (GlowPilot on a phone/PC, or Lotus Lantern), switched off, or out of range');
-    });
-    await a.stopDiscovery().catch(() => {});
+    const addr = address.toUpperCase();
+    // Scanning while connecting makes this kind of adapter abort the connection
+    // ("le-connection-abort-by-local"): only scan if BlueZ doesn't know the light yet, then stop first.
+    let d: Device;
+    try {
+      d = await a.getDevice(addr);
+    } catch {
+      if (!(await a.isDiscovering())) await a.startDiscovery().catch(() => {});
+      d = await a.waitDevice(addr, 20_000).catch(() => {
+        throw new Error('Light not visible: it is probably connected to another device (GlowPilot on a phone/PC, or Lotus Lantern), switched off, or out of range');
+      });
+    }
+    if (await a.isDiscovering().catch(() => false)) {
+      await a.stopDiscovery().catch(() => {});
+      await new Promise((r) => setTimeout(r, 800));
+    }
+    const step = (m: string) => process.env.GLOWPILOT_BLE_DEBUG && console.log(new Date().toISOString(), `[ble ${addr}] ${m}`);
+    step(`found, connected=${await d.isConnected().catch(() => '?')}`);
     if (!(await d.isConnected())) await d.connect();
+    step('connected, resolving services');
     this.device = d;
     d.removeAllListeners('disconnect');
     d.on('disconnect', () => {
@@ -73,6 +86,7 @@ export class BlueZTransport implements BleTransport {
       this.discCbs.forEach((cb) => cb());
     });
     const gatt = await d.gatt();
+    step('services resolved');
     const svc = await gatt.getPrimaryService(service);
     this.char = await svc.getCharacteristic(writeChar);
     if (notifyChar) {
@@ -80,8 +94,9 @@ export class BlueZTransport implements BleTransport {
         const n = await svc.getCharacteristic(notifyChar);
         n.on('valuechanged', (buf: Buffer) => this.notifyCbs.forEach((cb) => cb(new Uint8Array(buf))));
         await n.startNotifications();
-      } catch {
-        /* echo is optional */
+        step('echo notifications on');
+      } catch (e) {
+        step(`echo notifications unavailable: ${(e as Error).message}`); // optional
       }
     }
   }

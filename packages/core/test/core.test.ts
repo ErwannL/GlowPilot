@@ -507,3 +507,36 @@ describe('v0.1.2: reconnection never stalls', () => {
     expect(calls).toBe(1);
   });
 });
+
+describe('v0.1.3: zombie links', () => {
+  it('reconnects when frames go out but the controller stops echoing', async () => {
+    vi.useFakeTimers();
+    const sim = new SimulatorTransport();
+    const c = new DeviceController(sim, elkDriver, { minGapMs: 0 });
+    await c.connect(await c.pick());
+    c.setColor({ r: 1, g: 1, b: 1 });
+    await vi.advanceTimersByTimeAsync(100);
+    // BlueZ forgot the device: writes "succeed", nothing applies, no echo, no disconnect event.
+    sim.dropRate = 1;
+    for (let i = 0; i < 6; i++) { c.setColor({ r: i, g: 0, b: 0 }); await vi.advanceTimersByTimeAsync(2000); }
+    expect(c.zombieCount).toBeGreaterThan(0);
+    sim.dropRate = 0;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(c.status).toBe('connected');
+    c.setColor({ r: 0, g: 0, b: 200 });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(sim.state.b).toBeGreaterThan(100);
+    c.dispose();
+    vi.useRealTimers();
+  });
+  it('a healthy link is never flagged', async () => {
+    vi.useFakeTimers();
+    const sim = new SimulatorTransport();
+    const c = new DeviceController(sim, elkDriver, { minGapMs: 0 });
+    await c.connect(await c.pick());
+    for (let i = 0; i < 10; i++) { c.setColor({ r: i, g: 0, b: 0 }); await vi.advanceTimersByTimeAsync(2000); }
+    expect(c.zombieCount).toBe(0);
+    c.dispose();
+    vi.useRealTimers();
+  });
+});

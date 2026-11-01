@@ -14,3 +14,4 @@ services:
       - /var/run/dbus:/var/run/dbus
     environment:
       TZ: Europe/Paris
+      GLOWPILOT_BLE_DEBUG: "1"

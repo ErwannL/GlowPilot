@@ -121,6 +121,11 @@ class LocalApiServer {
       });
     });
 
+    server.on('error', (e) => {
+      // Port taken (another GlowPilot running…): keep the app working without the phone API instead of crashing.
+      console.error(`GlowPilot local API not started: ${e.message}`);
+      this.error = e.message;
+    });
     server.listen(this.opts.port, '0.0.0.0');
     this.server = server;
     return server;
