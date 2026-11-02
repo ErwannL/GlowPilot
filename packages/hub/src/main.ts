@@ -85,6 +85,7 @@ class Light {
     this.engine.scenes = state.scenes;
     this.controller.on('status', (s) => {
       log(`[${this.name}] ${s}`);
+      if (s === 'connected') this.lastConnectedAt = Date.now();
       if (s === 'connected' && !this.restored) {
         this.restored = true;
         const look = state.looks[device.id];
@@ -110,6 +111,7 @@ class Light {
     );
     this.connect();
   }
+  lastConnectedAt = Date.now();
   get name() { return this.device.alias || this.device.name; }
   connect() { this.controller.connect(this.device).catch(() => { /* controller retries with backoff */ }); }
   dispose() { this.engine.effects.stop(); void this.controller.disconnect(); }
@@ -165,7 +167,7 @@ function remoteState(): RemoteState & Record<string, unknown> {
     snapshot: primary?.engine.snapshot() ?? { light: { on: false, color: { r: 0, g: 0, b: 0 }, brightness: 0, speed: 50, controllerEffect: null }, activeSceneId: null, softwareEffect: null, sleepTimerEndsAt: null, ramp: null, activeRule: null, mixStepSceneId: null },
     status: primary?.controller.status ?? 'disconnected',
     deviceName: primary?.name ?? null,
-    scenes: state.scenes, rules: state.rules, schedules: state.schedules, foreground, owner: 'hub',
+    scenes: state.scenes, rules: state.rules, schedules: state.schedules, foreground, owner: ownership?.client ?? 'hub',
     lights: lights.map((l) => ({ id: l.device.id, name: l.name, status: l.controller.status, snapshot: l.engine.snapshot(), calibration: l.device.calibration, deviceName: l.device.name })),
     groups: state.groups,
     alarmActive: lights.some((l) => l.engine.snapshot().ramp?.kind === 'alarm'),
@@ -197,6 +199,22 @@ type HubMessage = ClientMessage
   | { t: 'saveNoyau'; noyau: Partial<NoyauSettings> };
 
 let lastScan: { id: string; name: string; rssi?: number }[] = [];
+/** A client that took the lights over: the hub does not connect while it holds them. */
+let ownership: { client: string; until: number } | null = null;
+
+function takeBack(why: string) {
+  ownership = null;
+  log(`hub takes the lights back (${why})`);
+  for (const l of lights) { l.controller.autoReconnect = true; l.connect(); }
+  publish();
+}
+
+// Ownership expiry, and gentler retries for a light that has been out of reach for a long time
+// (each attempt scans the air for 20 s; no point doing that every 30 s all night).
+setInterval(() => {
+  if (ownership && Date.now() > ownership.until) takeBack('2 h without release');
+  for (const l of lights) l.controller.maxBackoffMs = Date.now() - l.lastConnectedAt > 10 * 60_000 ? 120_000 : 30_000;
+}, 30_000);
 let scanning = false;
 
 /** One readable line per change, with the device that asked: answers "who changed my lights?". */
@@ -275,7 +293,19 @@ async function onMessage(client: string, m: HubMessage) {
       music.restart();
       break;
     }
-    case 'requestOwnership': case 'releaseOwnership': return; // the hub always keeps the lights
+    case 'requestOwnership': {
+      // A phone/PC takes the Bluetooth link (e.g. "Take over Bluetooth"): step aside instead of fighting
+      // for the single connection. Back after releaseOwnership, or after 2 hours at most.
+      ownership = { client, until: Date.now() + 2 * 60 * 60_000 };
+      for (const l of lights) { l.controller.autoReconnect = false; void l.controller.disconnect(); }
+      log(`[${client}] took the lights over: hub stepping aside`);
+      break;
+    }
+    case 'releaseOwnership': {
+      if (ownership && ownership.client !== client) return;
+      takeBack('released by ' + client);
+      break;
+    }
   }
   saveState();
   publish();

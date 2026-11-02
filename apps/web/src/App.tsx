@@ -12,6 +12,7 @@ import { Schedules } from './pages/Schedules';
 import { SettingsPage } from './pages/Settings';
 import { UpdateBanner } from './components/UpdateBanner';
 import { TargetPicker } from './components/TargetPicker';
+import { MasterHint } from './components/MasterHint';
 
 export const PAGES = [
   { id: 'home', label: 'Home', icon: '◉', el: Dashboard },
@@ -100,6 +101,7 @@ export function App() {
 
       <main className="relative z-10 mx-auto max-w-6xl px-4 pb-28 pt-6 lg:ml-64 lg:px-10 lg:pb-12 lg:pt-10 xl:mx-auto xl:pl-[17rem]">
         <UpdateBanner />
+        <MasterHint />
         {['home', 'color', 'effects', 'scenes'].includes(route) && <TargetPicker />}
         <Page />
       </main>

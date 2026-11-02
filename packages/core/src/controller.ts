@@ -35,6 +35,9 @@ export interface ControllerEvents {
   external: Uint8Array;
 }
 
+/** How long our own frames may take to be echoed back on FFF4. */
+const ECHO_WINDOW_MS = 8000;
+
 export const DEFAULT_STATE: LightState = { on: true, color: { r: 255, g: 120, b: 40 }, brightness: 80, speed: 50, controllerEffect: null };
 
 /**
@@ -55,11 +58,14 @@ export class DeviceController extends Emitter<ControllerEvents> {
   private awaitingEcho: { hex: string; bytes: Uint8Array; retried: boolean; timer: ReturnType<typeof setTimeout> } | null = null;
   resendCount = 0;
   private writeFailures = 0;
+  writeCount = 0;
   private lastWriteAt = 0;
   private connectedAt = 0;
   private watchdog: ReturnType<typeof setInterval>;
   /** No echo for this long while sending = dead link (the controller echoes every frame on FFF4). */
   livenessMs = 8000;
+  /** Longest wait between reconnection attempts (raised by the hub when a light has been gone a long time). */
+  maxBackoffMs = 30_000;
   zombieCount = 0;
   /** Frames written in the last few seconds, to tell our echoes from changes made elsewhere. */
   private recentSent: { hex: string; at: number }[] = [];
@@ -73,12 +79,15 @@ export class DeviceController extends Emitter<ControllerEvents> {
     this.queue = new CommandQueue(async (b) => {
       // Track before writing: the echo can arrive before write() resolves.
       this.trackEcho(b);
-      this.recentSent.push({ hex: toHex(b), at: Date.now() });
-      if (this.recentSent.length > 200) this.recentSent.splice(0, 100);
+      const t = Date.now();
+      this.recentSent.push({ hex: toHex(b), at: t });
+      // Keep everything from the last ECHO_WINDOW_MS, however fast an effect writes.
+      if (this.recentSent.length > 50 && t - this.recentSent[0].at > ECHO_WINDOW_MS) this.recentSent = this.recentSent.filter((x) => t - x.at < ECHO_WINDOW_MS);
       try {
         await this.transport.write(b);
         this.writeFailures = 0;
         this.lastWriteAt = Date.now();
+        this.writeCount++;
       } catch (e) {
         // A write that keeps failing means the link is gone even if no disconnect event came.
         if (++this.writeFailures >= 3 && this.status === 'connected') this.linkLost('writes failing');
@@ -94,8 +103,7 @@ export class DeviceController extends Emitter<ControllerEvents> {
         this.awaitingEcho = null;
       }
       const now = Date.now();
-      this.recentSent = this.recentSent.filter((x) => now - x.at < 3000);
-      if (this.lastAckAt && !this.recentSent.some((x) => x.hex === hex)) this.emit('external', b);
+      if (this.lastAckAt) this.checkExternal(b, hex, now);
       this.lastAckAt = now;
       this.emit('ack', b);
     });
@@ -245,6 +253,38 @@ export class DeviceController extends Emitter<ControllerEvents> {
     this.handleDrop();
   }
 
+  /**
+   * Is this notification someone else (IR remote, another app) changing the light?
+   * It must not echo anything we sent in the last ECHO_WINDOW_MS (echoes can be late under load),
+   * be a well-formed frame, and be confirmed: a second foreign frame within 4 s, or a single one
+   * while we were not writing (a remote press on a steady light). A false positive pauses GlowPilot,
+   * so this errs on the side of "it was us".
+   */
+  private pendingExternal: { b: Uint8Array; at: number; timer: ReturnType<typeof setTimeout> } | null = null;
+  private checkExternal(b: Uint8Array, hex: string, now: number): void {
+    if (b.length !== 9 || b[0] !== 0x7e || b[8] !== 0xef) return;
+    if (this.recentSent.some((x) => x.hex === hex && now - x.at < ECHO_WINDOW_MS)) return;
+    const p = this.pendingExternal;
+    if (p && now - p.at < 4000) {
+      clearTimeout(p.timer);
+      this.pendingExternal = null;
+      this.emit('external', b);
+      return;
+    }
+    if (p) clearTimeout(p.timer);
+    const quietBefore = now - this.lastWriteAt > 1500;
+    const pending = {
+      b, at: now,
+      timer: setTimeout(() => {
+        if (this.pendingExternal !== pending) return;
+        this.pendingExternal = null;
+        // Single press: only trust it if we were quiet before and after.
+        if (quietBefore && this.lastWriteAt <= pending.at) this.emit('external', b);
+      }, 1500),
+    };
+    this.pendingExternal = pending;
+  }
+
   /** Stop background timers (tests, removed lights). */
   dispose(): void {
     clearInterval(this.watchdog);
@@ -334,7 +374,7 @@ export class DeviceController extends Emitter<ControllerEvents> {
   private scheduleReconnect(): void {
     if (!this.device || this.reconnectTimer) return;
     this.setStatus('reconnecting');
-    const delay = Math.min(30_000, 500 * 2 ** this.reconnectAttempt++);
+    const delay = Math.min(this.maxBackoffMs, 500 * 2 ** this.reconnectAttempt++);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.device && !this.manualDisconnect) this.connect(this.device).catch(() => {});

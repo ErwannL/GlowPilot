@@ -43,7 +43,8 @@ export class WebBluetoothTransport implements BleTransport {
       // Chrome can return previously permitted devices without a chooser (when supported).
       const known = (await navigator.bluetooth?.getDevices?.()) ?? [];
       const d = known.find((k) => k.id === deviceId);
-      if (!d) throw new Error('Select the controller again (browser permission expired).');
+      // Message checked by the store (/select the controller again/), which then opens the picker on Reconnect.
+      if (!d) throw new Error('Tap Reconnect and select the controller again in the list.');
       this.attach(d);
     }
     const gatt = await this.device!.gatt!.connect();

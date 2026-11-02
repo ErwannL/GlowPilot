@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   applyCalibration, AutomationEngine, colorName, CommandQueue, DeviceController, effectColorAt, elkDriver,
   EXAMPLE_RULES, exportScenes, findConflicts, GlowEngine, hexToRgb, hsvToRgb, IDENTITY_CALIBRATION, importScenes,
-  kelvinToRgb, nextRun, pickRule, rampLevel, alarmAt, playableSteps, wakeTimes, rgbToHex, rgbToHsv, BUILTIN_SCENES, SimulatorTransport, toHex,
+  kelvinToRgb, nextRun, pickRule, rampLevel, alarmAt, playableSteps, wakeTimes, SharedSimStrip, SharedSimTransport, rgbToHex, rgbToHsv, BUILTIN_SCENES, SimulatorTransport, toHex,
   type AutomationRule, type Schedule,
 } from '../src';
 
@@ -404,8 +404,12 @@ describe('v0.0.7: other controllers of the light', () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(ext).toEqual([]); // our own echo
     // The IR remote picks green: the controller reports a frame we never sent.
-    (sim as unknown as { notifyCbs: ((b: Uint8Array) => void)[] }).notifyCbs.forEach((cb) => cb(elkDriver.rgb(0, 255, 0).bytes));
-    expect(ext).toEqual([toHex(elkDriver.rgb(0, 255, 0).bytes)]);
+    // The IR remote picks green twice (a single foreign frame right after our own writes is not trusted).
+    const remote = (sim as unknown as { notifyCbs: ((b: Uint8Array) => void)[] }).notifyCbs;
+    remote.forEach((cb) => cb(elkDriver.rgb(0, 255, 0).bytes));
+    expect(ext).toEqual([]);
+    remote.forEach((cb) => cb(elkDriver.rgb(0, 200, 0).bytes));
+    expect(ext).toEqual([toHex(elkDriver.rgb(0, 200, 0).bytes)]);
 
     const eng = new GlowEngine(c);
     eng.scenes = BUILTIN_SCENES;
@@ -537,6 +541,106 @@ describe('v0.1.3: zombie links', () => {
     for (let i = 0; i < 10; i++) { c.setColor({ r: i, g: 0, b: 0 }); await vi.advanceTimersByTimeAsync(2000); }
     expect(c.zombieCount).toBe(0);
     c.dispose();
+    vi.useRealTimers();
+  });
+});
+
+describe('v0.1.5: one strip, several apps, odd cases', () => {
+  const mk = (strip: SharedSimStrip, who: string) => new DeviceController(new SharedSimTransport(strip, who), elkDriver, { minGapMs: 0 });
+
+  it('only one app can hold the strip; the others cannot even see it until it is released', async () => {
+    const strip = new SharedSimStrip();
+    const pc = mk(strip, 'pc'), phone = mk(strip, 'phone');
+    const d = await pc.pick();
+    await pc.connect(d);
+    await expect(phone.pick()).rejects.toThrow(/No devices/);
+    phone.autoReconnect = false;
+    await expect(phone.connect(d)).rejects.toThrow(/held by pc/);
+    await pc.disconnect();
+    await phone.connect(await phone.pick());
+    expect(phone.status).toBe('connected');
+    pc.dispose(); phone.dispose();
+  });
+
+  it('never pauses itself on its own late, duplicated or lost echoes (long breathing run)', async () => {
+    vi.useFakeTimers();
+    const strip = new SharedSimStrip();
+    strip.echoDelayMs = () => Math.random() * 2500;
+    strip.echoDuplicate = 0.05;
+    strip.echoDrop = 0.05;
+    const c = mk(strip, 'pc');
+    const ext: string[] = [];
+    c.on('external', (b) => ext.push(toHex(b)));
+    await c.connect(await c.pick());
+    const eng = new GlowEngine(c);
+    eng.exec({ type: 'softwareEffect', effect: { type: 'breathe', colors: [{ r: 140, g: 0, b: 255 }, { r: 255, g: 60, b: 0 }], speed: 80 } });
+    await vi.advanceTimersByTimeAsync(200_000);
+    expect(c.writeCount).toBeGreaterThan(500);
+    expect(ext).toEqual([]);
+    eng.effects.stop(); c.dispose();
+    vi.useRealTimers();
+  });
+
+  it('detects the IR remote: one press on a steady light, two presses during an animation', async () => {
+    vi.useFakeTimers();
+    const strip = new SharedSimStrip();
+    const c = mk(strip, 'pc');
+    const ext: string[] = [];
+    c.on('external', (b) => ext.push(toHex(b)));
+    await c.connect(await c.pick());
+    c.setColor({ r: 255, g: 255, b: 255 });
+    await vi.advanceTimersByTimeAsync(3000);
+    strip.remote(elkDriver.rgb(0, 0, 255).bytes);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(ext).toHaveLength(1);
+    const eng = new GlowEngine(c);
+    eng.exec({ type: 'softwareEffect', effect: { type: 'fade', colors: [{ r: 255, g: 0, b: 0 }, { r: 0, g: 0, b: 255 }], speed: 60 } });
+    await vi.advanceTimersByTimeAsync(1000);
+    strip.remote(elkDriver.rgb(0, 255, 0).bytes);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(ext).toHaveLength(1);
+    strip.remote(elkDriver.rgb(0, 255, 0).bytes);
+    await vi.advanceTimersByTimeAsync(500);
+    strip.remote(elkDriver.rgb(0, 250, 0).bytes);
+    expect(ext).toHaveLength(2);
+    eng.effects.stop(); c.dispose();
+    vi.useRealTimers();
+  });
+
+  it('power cut while connected: reconnects and re-applies the colour', async () => {
+    vi.useFakeTimers();
+    const strip = new SharedSimStrip();
+    const c = mk(strip, 'hub');
+    const d = await c.pick();
+    d.calibration = IDENTITY_CALIBRATION;
+    await c.connect(d);
+    c.setColor({ r: 10, g: 20, b: 30 });
+    await vi.advanceTimersByTimeAsync(100);
+    strip.powerCycle();
+    strip.state = { ...strip.state, r: 255, g: 255, b: 255 };
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(c.status).toBe('connected');
+    expect(strip.state).toMatchObject({ r: 10, g: 20, b: 30 });
+    c.dispose();
+    vi.useRealTimers();
+  });
+
+  it('an app keeps retrying while another holds it, then takes over as soon as it is free', async () => {
+    vi.useFakeTimers();
+    const strip = new SharedSimStrip();
+    const holder = mk(strip, 'pc'), waiter = mk(strip, 'hub');
+    const d = await holder.pick();
+    await holder.connect(d);
+    waiter.connect(d).catch(() => {});
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(waiter.status).toBe('reconnecting');
+    holder.setColor({ r: 1, g: 2, b: 3 });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(holder.status).toBe('connected');
+    await holder.disconnect();
+    await vi.advanceTimersByTimeAsync(35_000);
+    expect(waiter.status).toBe('connected');
+    holder.dispose(); waiter.dispose();
     vi.useRealTimers();
   });
 });

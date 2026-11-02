@@ -114,3 +114,92 @@ export class SimulatorTransport implements BleTransport {
 }
 
 export { normalizeName };
+
+/**
+ * A simulated LED controller shared by several apps, with the real hardware's rule: one central at a
+ * time. While connected it stops advertising, so others can neither find nor connect to it.
+ * Echoes can be degraded (late, duplicated, lost) to test the detection logic.
+ */
+export class SharedSimStrip {
+  owner: SharedSimTransport | null = null;
+  state: SimulatedStripState = { on: false, r: 0, g: 0, b: 0, brightness: 100, speed: 50, effect: null };
+  echoDelayMs: () => number = () => 0;
+  echoDuplicate = 0;
+  echoDrop = 0;
+  constructor(public device: DiscoveredDevice = { id: 'BE:27:DA:00:7C:83', name: 'ELK-BLEDDM    ' }) {}
+
+  get advertising() {
+    return this.owner === null;
+  }
+
+  /** Someone presses the IR remote: the controller applies it and notifies its central. */
+  remote(frame: Uint8Array) {
+    this.apply(frame);
+    this.owner?.deliver(frame);
+  }
+
+  apply(f: Uint8Array) {
+    if (f.length !== 9 || f[0] !== 0x7e) return;
+    if (f[2] === 0x04) this.state = { ...this.state, on: f[3] === 1 };
+    if (f[2] === 0x05 && f[3] === 0x03) this.state = { ...this.state, r: f[4], g: f[5], b: f[6], effect: null };
+  }
+
+  /** Power cut: drops whoever was connected. */
+  powerCycle() {
+    const o = this.owner;
+    this.owner = null;
+    o?.dropped();
+  }
+}
+
+export class SharedSimTransport implements BleTransport {
+  readonly kind = 'simulator' as const;
+  private notifyCbs: ((b: Uint8Array) => void)[] = [];
+  private discCbs: (() => void)[] = [];
+
+  constructor(public strip: SharedSimStrip, public who: string) {}
+
+  get connected() {
+    return this.strip.owner === this;
+  }
+
+  async requestDevice(): Promise<DiscoveredDevice> {
+    if (!this.strip.advertising) throw new Error('No devices found');
+    return this.strip.device;
+  }
+
+  async connect(id: string): Promise<void> {
+    if (id !== this.strip.device.id) throw new Error('Unknown device');
+    if (this.strip.owner && this.strip.owner !== this) throw new Error(`Light not visible (held by ${this.strip.owner.who})`);
+    this.strip.owner = this;
+  }
+
+  async disconnect(): Promise<void> {
+    if (this.strip.owner === this) this.strip.owner = null;
+  }
+
+  async write(b: Uint8Array): Promise<void> {
+    if (this.strip.owner !== this) throw new Error('Not connected');
+    this.strip.apply(b);
+    if (Math.random() < this.strip.echoDrop) return;
+    const copy = b.slice();
+    const n = Math.random() < this.strip.echoDuplicate ? 2 : 1;
+    for (let i = 0; i < n; i++) setTimeout(() => this.deliver(copy), this.strip.echoDelayMs());
+  }
+
+  deliver(b: Uint8Array) {
+    if (this.strip.owner === this) this.notifyCbs.forEach((cb) => cb(b));
+  }
+
+  dropped() {
+    this.discCbs.forEach((cb) => cb());
+  }
+
+  onNotify(cb: (b: Uint8Array) => void) {
+    this.notifyCbs.push(cb);
+  }
+
+  onDisconnect(cb: () => void) {
+    this.discCbs.push(cb);
+  }
+}

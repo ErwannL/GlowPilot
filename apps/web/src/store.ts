@@ -92,6 +92,8 @@ export interface Settings {
   mode: Mode;
   remoteUrl: string;
   remoteToken: string | null;
+  /** One pairing token per GlowPilot (hub, PC…), so the app can switch to whichever holds the lights. */
+  remoteTokens: Record<string, string>;
   clientName: string;
   overrideMinutes: number;
   /** Android: start the wake-up lights N minutes before the phone's own alarm clock. */
@@ -135,6 +137,8 @@ export interface UIState {
    */
   paused: null | { reason: 'remote' | 'manual'; at: number };
   update: UpdateInfo | null;
+  /** Another GlowPilot on the network holds the lights, and this device isn't paired with it yet. */
+  masterHint: { url: string; role: 'hub' | 'desktop' } | null;
   /** What the PC reports about its lights (used by the phone's alarm to find them on its own). */
   remoteLights: { names: string[]; addresses: string[] };
   /** Connected to a GlowPilot Hub (always-on server that owns the lights), not to a PC. */
@@ -231,6 +235,7 @@ const defaultSettings: Settings = {
   mode: WebBluetoothTransport.available || CapacitorBleTransport.available || desktop ? 'local' : 'simulator',
   remoteUrl: location.protocol.startsWith('http') && location.port === String(API_PORT) ? `ws://${location.host}` : '',
   remoteToken: null,
+  remoteTokens: {},
   clientName: /Android/i.test(navigator.userAgent) ? 'Android phone' : 'Web browser',
   overrideMinutes: 30,
   phoneAlarmSync: true,
@@ -391,6 +396,7 @@ class Store {
       btChooser: null,
       music: { running: false, level: 0 },
       update: null,
+      masterHint: null,
       remoteLights: { names: [], addresses: [] },
       hub: false,
       hubScan: [],
@@ -402,6 +408,8 @@ class Store {
     this.automation.rules = this.state.rules;
     this.setupMode(settings.mode);
     this.setupDesktop();
+    // Started in Direct Bluetooth: make sure the hub/PC we're paired with isn't fighting for the lights.
+    if (settings.mode === 'local') void this.tellPeer({ t: 'requestOwnership' });
     window.__glowpilotAutoconnect = () => void this.autoconnectNext();
     this.syncWakeTasks();
     this.schedulePhoneSync();
@@ -434,7 +442,7 @@ class Store {
         addresses: [...new Set([...own.map((d) => d.id).filter((id) => /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i.test(id)), ...s.remoteLights.addresses])],
         names: [...new Set([...own.map((d) => d.name), ...s.remoteLights.names])],
         desktopUrl: s.settings.remoteUrl.replace(/^ws/, 'http'),
-        token: s.settings.remoteToken ?? '',
+        token: this.tokenFor(s.settings.remoteUrl) ?? '',
         syncPhoneAlarm: s.settings.phoneAlarmSync,
         minutesBefore: s.settings.phoneAlarmMinutes,
         color: s.settings.phoneAlarmColor,
@@ -536,7 +544,27 @@ class Store {
     return light;
   }
 
+  /** Send one message to the paired hub/PC over HTTP (works even when we're not connected to it by WebSocket). */
+  private async tellPeer(m: ClientMessage): Promise<boolean> {
+    const url = this.state.settings.remoteUrl;
+    const token = this.tokenFor(url);
+    if (!url || !token) return false;
+    try {
+      const r = await fetch(`${url.replace(/^ws/, 'http')}/api/message`, {
+        method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(m), signal: AbortSignal.timeout(4000),
+      });
+      return r.ok;
+    } catch {
+      return false;
+    }
+  }
+
   setupMode(mode: Mode) {
+    // One Bluetooth master at a time: going direct asks the hub/PC we're paired with to step aside,
+    // going back through it hands the lights back.
+    const prev = this.state.mode;
+    if (mode === 'local' && prev !== 'local') void this.tellPeer({ t: 'requestOwnership' });
+    if (mode === 'remote' && prev === 'local') void this.tellPeer({ t: 'releaseOwnership' });
     this.stopMusic();
     this.lights.forEach((l) => l.dispose());
     this.lights = [];
@@ -1005,7 +1033,52 @@ class Store {
 
   // --- remote (this client controls GlowPilot Desktop over the LAN) -----------------------
 
+  /** Token for an instance: its own entry, or (≤ 0.1.4) the single token saved for the current address. */
+  tokenFor(url: string): string | null {
+    const s = this.state.settings;
+    return s.remoteTokens?.[url] ?? (url === s.remoteUrl ? s.remoteToken : null) ?? null;
+  }
+
+  /**
+   * Follow the master: only one device can hold the lights' Bluetooth link. If the instance we talk to
+   * hasn't had a light connected for a while, look for another GlowPilot (hub or PC) that has, and switch
+   * to it, or suggest pairing with it if we never did.
+   */
+  private followTimer: ReturnType<typeof setInterval> | null = null;
+  private noLightSince = 0;
+  private followBusy = false;
+  private startFollowingMaster() {
+    if (this.followTimer) return;
+    this.followTimer = setInterval(() => void this.followMaster(), 15_000);
+  }
+
+  private async followMaster() {
+    if (this.state.mode !== 'remote' || this.state.remote.state !== 'connected' || this.followBusy) return;
+    const connected = this.state.lights.some((l) => l.status === 'connected') || this.state.status === 'connected';
+    if (connected) { this.noLightSince = 0; if (this.state.masterHint) this.set({ masterHint: null }); return; }
+    if (!this.noLightSince) { this.noLightSince = Date.now(); return; }
+    if (Date.now() - this.noLightSince < 20_000) return;
+    this.followBusy = true;
+    try {
+      const { discoverAll, subnetOf } = await import('./discovery');
+      const here = this.state.settings.remoteUrl;
+      const sub = subnetOf(here);
+      const list = await discoverAll(sub ? [sub] : undefined);
+      const master = list.find((x) => x.lightsConnected && x.url !== here);
+      if (!master) return;
+      if (this.tokenFor(master.url)) {
+        this.updateSettings({ remoteUrl: master.url });
+        this.noLightSince = 0;
+        this.set({ masterHint: null });
+        this.connectRemote();
+      } else this.set({ masterHint: { url: master.url, role: master.role } });
+    } finally {
+      this.followBusy = false;
+    }
+  }
+
   connectRemote() {
+    this.startFollowingMaster();
     const url = this.state.settings.remoteUrl;
     if (!url) return this.set({ remote: { state: 'error', message: 'Enter the address shown in GlowPilot Desktop → Settings.' } });
     if (this.remoteRetry) clearTimeout(this.remoteRetry);
@@ -1018,18 +1091,21 @@ class Store {
     }
     this.ws = ws;
     ws.onopen = () => {
-      const token = this.state.settings.remoteToken;
+      const token = this.tokenFor(url);
       if (token) ws.send(JSON.stringify({ t: 'auth', token } satisfies ClientMessage));
       else this.set({ remote: { state: 'needsPairing' } });
     };
     ws.onmessage = (ev) => {
       const m = JSON.parse(String(ev.data)) as ServerMessage;
       if (m.t === 'paired') {
-        this.updateSettings({ remoteToken: m.token });
+        this.updateSettings({ remoteToken: m.token, remoteTokens: { ...this.state.settings.remoteTokens, [url]: m.token } });
         ws.send(JSON.stringify({ t: 'auth', token: m.token } satisfies ClientMessage));
       } else if (m.t === 'authed') this.set({ remote: { state: 'connected' } });
       else if (m.t === 'denied') {
-        if (/token/i.test(m.reason)) this.updateSettings({ remoteToken: null });
+        if (/token/i.test(m.reason)) {
+          const { [url]: _gone, ...rest } = this.state.settings.remoteTokens;
+          this.updateSettings({ remoteToken: null, remoteTokens: rest });
+        }
         this.set({ remote: { state: 'needsPairing', message: m.reason } });
       } else if (m.t === 'state') {
         const r = m.state;

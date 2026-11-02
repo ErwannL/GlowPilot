@@ -73,7 +73,12 @@ class LocalApiServer {
       if (!isPrivateAddress(req.socket.remoteAddress)) { req.socket.destroy(); return; }
       const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
       // Public: lets phones find GlowPilot on the network and prefer a hub over a PC.
-      if (urlPath === '/api/info') return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ app: 'GlowPilot', role: this.opts.role || 'desktop' }));
+      // lightsConnected lets phones follow whichever GlowPilot currently holds the lights (one Bluetooth master at a time).
+      if (urlPath === '/api/info') {
+        const st = this.lastState;
+        const lightsConnected = !!st && (st.lights?.length ? st.lights.some((l) => l.status === 'connected') : st.status === 'connected');
+        return res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }).end(JSON.stringify({ app: 'GlowPilot', role: this.opts.role || 'desktop', lightsConnected }));
+      }
       // Pairing code, only from the machine itself (the hub has no screen: Noyau or an SSH session shows it).
       if (urlPath === '/api/pairing') {
         const a = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
@@ -137,6 +142,11 @@ class LocalApiServer {
    * POST /api/phone-alarm  → { at: ms | null, minutes, color }: light alarm before the phone's alarm clock.
    */
   handleApi(req, res, urlPath) {
+    // Browsers / the desktop window call this API cross-origin with a Bearer token: answer CORS preflights.
+    res.setHeader('access-control-allow-origin', '*');
+    res.setHeader('access-control-allow-headers', 'authorization, content-type');
+    res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+    if (req.method === 'OPTIONS') return res.writeHead(204).end();
     const json = (code, body) => res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(body));
     const readBody = (cb) => {
       let body = '';
