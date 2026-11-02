@@ -182,8 +182,10 @@ function PhoneAlarmCard() {
           </div>
         )}
         <div className="rounded-xl bg-white/5 p-3 text-xs">
-          <div>Next phone alarm: <b className="text-white/85">{fmt(pa?.systemAt)}</b></div>
+          <div>Followed alarm: <b className="text-white/85">{fmt(pa?.systemAt)}</b>{pa?.systemApp ? <span className="text-white/45"> · from {pa.systemApp}</span> : null}</div>
+          {pa?.systemAt ? <div>Lights start: <b className="text-white/85">{fmt(pa.systemAt - st.phoneAlarmMinutes * 60_000)}</b> ({st.phoneAlarmMinutes} min before)</div> : null}
           <div>Next light alarm handled by this phone: <b className="text-white/85">{fmt(pa?.nextAt)}</b></div>
+          <div className="text-white/40">Only alarms from your clock app are followed (not reminders or calendar events).</div>
           <div>PC link for the alarm: <b className="text-white/85">{st.remoteToken ? 'paired ✓' : 'not paired (the phone will always do it alone)'}</b></div>
         </div>
         {pa && !pa.exact && (

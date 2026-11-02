@@ -145,7 +145,7 @@ export interface UIState {
   /** Hub ↔ Noyau Musique settings as reported by the hub (the token itself never leaves the hub). */
   hubNoyau: { url: string; musicSync: boolean; colors: string[]; target: string; hasToken: boolean; status: string; playing: boolean } | null;
   /** Android: next ring of the phone's alarm clock, and when the phone will run a light alarm. */
-  phoneAlarm: { systemAt: number | null; nextAt: number | null; exact: boolean } | null;
+  phoneAlarm: { systemAt: number | null; systemApp?: string | null; nextAt: number | null; exact: boolean } | null;
 }
 
 // --- persistence ---------------------------------------------------------------
@@ -440,8 +440,8 @@ class Store {
         color: s.settings.phoneAlarmColor,
       }).then(async (r) => {
         const { GlowAlarm } = await import('./phoneAlarm');
-        const sys = await GlowAlarm.nextSystemAlarm().catch(() => ({ at: null }));
-        this.set({ phoneAlarm: { systemAt: sys.at, nextAt: r?.nextAt ?? this.state.phoneAlarm?.nextAt ?? null, exact: r?.exact ?? this.state.phoneAlarm?.exact ?? true } });
+        const sys = await GlowAlarm.nextSystemAlarm().catch(() => ({ at: null, app: null }));
+        this.set({ phoneAlarm: { systemAt: sys.at, systemApp: sys.app, nextAt: r?.nextAt ?? this.state.phoneAlarm?.nextAt ?? null, exact: r?.exact ?? this.state.phoneAlarm?.exact ?? true } });
       });
     }, 800);
   }

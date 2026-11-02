@@ -48,14 +48,40 @@ public final class AlarmStore {
         return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
-    /** Trigger time of the next alarm set in another app (the Clock app), or 0. Ignores our own alarms. */
+    /**
+     * Trigger time of the next alarm of an alarm-clock app (Samsung Clock, Google Clock…), or 0.
+     * Android's "next alarm" also includes reminders, calendars and routines from other apps: following
+     * those turned the lights on at random times (4:00, 8:15). Only clock apps count; when another app's
+     * alarm comes first, the last known clock alarm is kept until that one surfaces again.
+     */
     static long nextSystemAlarm(Context ctx) {
+        String[] r = nextClockAlarm(ctx);
+        return r == null ? 0 : Long.parseLong(r[0]);
+    }
+
+    /** { triggerMs, packageName } of the next clock-app alarm, or null. */
+    static String[] nextClockAlarm(Context ctx) {
         AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
         AlarmManager.AlarmClockInfo info = am.getNextAlarmClock();
-        if (info == null) return 0;
-        PendingIntent show = info.getShowIntent();
-        if (show != null && ctx.getPackageName().equals(show.getCreatorPackage())) return 0;
-        return info.getTriggerTime();
+        SharedPreferences p = prefs(ctx);
+        long now = System.currentTimeMillis();
+        if (info != null) {
+            PendingIntent show = info.getShowIntent();
+            String pkg = show != null ? show.getCreatorPackage() : null;
+            if (pkg != null && !ctx.getPackageName().equals(pkg) && isClockApp(pkg)) {
+                p.edit().putLong("clockAlarmAt", info.getTriggerTime()).putString("clockAlarmPkg", pkg).apply();
+                return new String[]{String.valueOf(info.getTriggerTime()), pkg};
+            }
+            Log.i(TAG, "ignoring next alarm from " + pkg + " (not a clock app)");
+        }
+        long kept = p.getLong("clockAlarmAt", 0);
+        if (kept > now) return new String[]{String.valueOf(kept), p.getString("clockAlarmPkg", "")};
+        return null;
+    }
+
+    static boolean isClockApp(String pkg) {
+        String p = pkg.toLowerCase();
+        return p.contains("clock") || p.contains("alarm") || p.equals("com.android.bbkclock");
     }
 
     /** Next start time (ms) of a recurring "HH:MM" on days (0 = Sunday), or of a dated one-shot. */

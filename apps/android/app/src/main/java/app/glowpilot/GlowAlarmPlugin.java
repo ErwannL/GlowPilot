@@ -55,8 +55,16 @@ public class GlowAlarmPlugin extends Plugin {
     @PluginMethod
     public void nextSystemAlarm(PluginCall call) {
         JSObject r = new JSObject();
-        long at = AlarmStore.nextSystemAlarm(getContext());
-        r.put("at", at > 0 ? at : null);
+        String[] next = AlarmStore.nextClockAlarm(getContext());
+        r.put("at", next != null ? Long.parseLong(next[0]) : null);
+        String app = null;
+        if (next != null) {
+            try {
+                android.content.pm.PackageManager pm = getContext().getPackageManager();
+                app = pm.getApplicationLabel(pm.getApplicationInfo(next[1], 0)).toString();
+            } catch (Exception e) { app = next[1]; }
+        }
+        r.put("app", app);
         call.resolve(r);
     }
 

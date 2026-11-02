@@ -4,7 +4,7 @@ import type { AlarmOptions, Schedule } from '@glowpilot/core';
 /** Native Android module (apps/android/.../GlowAlarmPlugin.java). */
 interface GlowAlarmPlugin {
   configure(cfg: PhoneAlarmConfig): Promise<{ nextAt: number; exact: boolean }>;
-  nextSystemAlarm(): Promise<{ at: number | null }>;
+  nextSystemAlarm(): Promise<{ at: number | null; app?: string | null }>;
   stop(): Promise<void>;
   ensurePermissions(): Promise<{ bluetooth: boolean; notifications: boolean; exact: boolean }>;
   openExactAlarmSettings(): Promise<void>;
