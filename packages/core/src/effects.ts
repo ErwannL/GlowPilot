@@ -46,7 +46,8 @@ export function effectColorAt(e: SoftwareEffect, t: number): RGB {
     case 'breathe': {
       const i = Math.floor(t / (p * 2)) % n;
       const phase = (t % (p * 2)) / (p * 2);
-      return scaleRgb(colors[i], 0.08 + 0.92 * (0.5 - 0.5 * Math.cos(phase * 2 * Math.PI)));
+      // Never below 20 %: cheap strips flicker and shift colour at very low PWM (looked like violet flashing).
+      return scaleRgb(colors[i], BREATHE_MIN + (1 - BREATHE_MIN) * (0.5 - 0.5 * Math.cos(phase * 2 * Math.PI)));
     }
     case 'rainbow':
       return hsvToRgb({ h: ((t / (p * 6)) * 360) % 360, s: 1, v: 1 });
@@ -73,6 +74,7 @@ export function effectColorAt(e: SoftwareEffect, t: number): RGB {
 }
 
 export const STROBE_MIN_MS = 150;
+export const BREATHE_MIN = 0.2;
 
 /** Deterministic pseudo-random 0–1 for an integer bucket. */
 const hash = (k: number, seed = 0) => {

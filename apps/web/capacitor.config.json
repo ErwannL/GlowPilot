@@ -9,7 +9,7 @@
   "plugins": {
     "BluetoothLe": {
       "displayStrings": {
-        "scanning": "Looking for lights\u00e2\u20ac\u00a6",
+        "scanning": "Looking for lights...",
         "cancel": "Cancel",
         "availableDevices": "Nearby controllers",
         "noDeviceFound": "No controller found"

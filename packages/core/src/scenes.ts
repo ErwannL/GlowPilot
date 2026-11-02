@@ -68,7 +68,8 @@ export const BUILTIN_SCENES: Scene[] = [
   s('cinema', 'Cinema', '🎬', ['#1a0a40'], 18, sw('static')),
   s('gaming', 'Gaming', '🎮', ['#7a00ff', '#0040ff', '#ff0090'], 100, sw('fade'), 55),
   s('work', 'Work', '💼', ['#fff1dc'], 100, sw('static')),
-  s('relax', 'Relax', '🌿', ['#ff7a30', '#ff4a60'], 45, sw('breathe'), 15),
+  // Orange and red only: pinks contain blue, which this kind of strip renders as violet when dimmed.
+  s('relax', 'Relax', '🌿', ['#ff6a1a', '#ff2a00'], 45, sw('breathe'), 15),
   s('sunset', 'Sunset', '🌅', ['#ff3a00', '#ff7a10', '#c0204a'], 70, sw('fade'), 12),
   s('night', 'Night', '🌙', ['#ff2a00'], 8, sw('static')),
   s('reading', 'Reading', '📖', ['#ffd9a8'], 90, sw('static')),

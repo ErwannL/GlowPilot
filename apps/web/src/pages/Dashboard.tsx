@@ -1,4 +1,5 @@
-import { colorName, rgbToHex, SOFTWARE_EFFECTS, elkDriver } from '@glowpilot/core';
+import { colorName, effectColorAt, rgbToHex, SOFTWARE_EFFECTS, elkDriver } from '@glowpilot/core';
+import { useNow } from '../hooks';
 import { store, useStore } from '../store';
 import { navigate } from '../App';
 import { Badge, Button, Card, Slider, StatusPill, Toggle } from '../components/ui';
@@ -9,7 +10,11 @@ export function Dashboard() {
   const { light, activeSceneId, softwareEffect, sleepTimerEndsAt, ramp, activeRule } = s.snapshot;
   const scene = s.scenes.find((x) => x.id === activeSceneId);
   const rule = s.rules.find((r) => r.id === activeRule);
-  const hex = rgbToHex(light.color);
+  // With a GlowPilot animation running, show its colours (light.color is the last steady colour).
+  const now = useNow(softwareEffect ? 150 : 60_000);
+  const shown = softwareEffect ? effectColorAt(softwareEffect, now) : light.color;
+  const named = softwareEffect ? (softwareEffect.colors[0] ?? light.color) : light.color;
+  const hex = rgbToHex(shown);
   const connected = s.status === 'connected';
   const mode = light.controllerEffect != null
     ? elkDriver.effects.find((e) => e.id === light.controllerEffect)?.name ?? 'Controller effect'
@@ -70,8 +75,8 @@ export function Dashboard() {
             <button onClick={() => navigate('color')} className="h-24 w-24 shrink-0 rounded-[28px] border border-white/15 transition hover:scale-105"
               style={{ background: light.on ? hex : '#1a1730', boxShadow: light.on ? `0 0 50px ${hex}88` : 'none' }} aria-label="Change colour" />
             <div className="min-w-0">
-              <div className="text-2xl font-semibold">{light.on ? colorName(light.color) : 'Off'}</div>
-              <div className="text-sm text-white/50">{hex.toUpperCase()} · {mode}</div>
+              <div className="text-2xl font-semibold">{light.on ? colorName(named) : 'Off'}</div>
+              <div className="text-sm text-white/50">{rgbToHex(named).toUpperCase()} · {mode}</div>
               {s.error && <div className="mt-2 text-sm text-red-300">{s.error}</div>}
             </div>
           </div>
