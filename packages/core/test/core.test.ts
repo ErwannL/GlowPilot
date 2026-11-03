@@ -644,3 +644,14 @@ describe('v0.1.5: one strip, several apps, odd cases', () => {
     vi.useRealTimers();
   });
 });
+
+describe('v0.1.7: gentle synced alarm', () => {
+  it('steady rhythm never flashes and ends at the chosen intensity', () => {
+    const total = 30 * 60_000;
+    const c = { rhythm: 'steady' as const, flashDuringBuildup: false, endBrightness: 70 };
+    const samples = Array.from({ length: 400 }, (_, i) => alarmAt(i * 9000, total, c));
+    expect(samples.every((s) => s.on)).toBe(true);
+    expect(Math.max(...samples.map((s) => s.level))).toBeCloseTo(0.7, 5);
+    expect(alarmAt(0, total, c).level).toBeLessThan(0.05);
+  });
+});

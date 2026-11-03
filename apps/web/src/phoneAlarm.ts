@@ -28,6 +28,8 @@ export interface PhoneAlarmConfig {
   syncPhoneAlarm: boolean;
   minutesBefore: number;
   color: string;
+  endBrightness: number;
+  flash: boolean;
 }
 
 export const GlowAlarm = registerPlugin<GlowAlarmPlugin>('GlowAlarm');

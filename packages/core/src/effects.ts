@@ -110,7 +110,7 @@ function horrorAt(colors: RGB[], t: number, speed: number): RGB {
  * halfway and speeds up; after the build-up it keeps flashing until someone turns it off.
  */
 export interface AlarmCurve {
-  rhythm?: 'flash' | 'blink' | 'music';
+  rhythm?: 'flash' | 'blink' | 'music' | 'steady';
   blinkSpeed?: number;
   accelerate?: boolean;
   startBrightness?: number;
@@ -126,6 +126,7 @@ export function alarmAt(elapsedMs: number, totalMs: number, c: AlarmCurve = {}):
   const lo = (c.startBrightness ?? 2) / 100, hi = (c.endBrightness ?? 100) / 100;
   if (f >= 1) {
     const rhythm = c.rhythm ?? 'flash';
+    if (rhythm === 'steady') return { level: hi, on: true };
     if (rhythm === 'flash') return { level: hi, on: elapsedMs % 400 < 200 };
     // 'blink' (and 'music' where no audio is available, e.g. on the PC): chosen rhythm, optionally accelerating over 5 min.
     let half = blinkHalfPeriod(c.blinkSpeed ?? 50);

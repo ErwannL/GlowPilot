@@ -176,7 +176,10 @@ class LocalApiServer {
           const b = JSON.parse(body);
           const at = b.at == null ? null : Number(b.at);
           if (at !== null && !(at > 0)) return json(400, { error: 'bad time' });
-          this.opts.onMessage(client.name, { t: 'phoneAlarm', at, minutes: Math.max(1, Math.min(180, Number(b.minutes) || 60)), color: /^#[0-9a-f]{6}$/i.test(b.color) ? b.color : '#ff8a30' });
+          this.opts.onMessage(client.name, {
+            t: 'phoneAlarm', at, minutes: Math.max(1, Math.min(180, Number(b.minutes) || 60)), color: /^#[0-9a-f]{6}$/i.test(b.color) ? b.color : '#ff8a30',
+            endBrightness: Math.max(1, Math.min(100, Number(b.endBrightness) || 70)), flash: b.flash === true,
+          });
           json(200, { ok: true });
         } catch {
           json(400, { error: 'bad json' });

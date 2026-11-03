@@ -127,6 +127,11 @@ public final class AlarmStore {
                     a.put("onceAt", ring - before * 60_000L);
                     a.put("minutes", before);
                     a.put("color", cfg.optString("color", "#ff8a30"));
+                    // The Clock app rings: GlowPilot only does the light, gently unless asked otherwise.
+                    boolean flash = cfg.optBoolean("flash", false);
+                    a.put("endBrightness", cfg.optInt("endBrightness", 70));
+                    a.put("flashDuringBuildup", flash);
+                    a.put("rhythm", flash ? "flash" : "steady");
                     out.put(a);
                 } catch (Exception ignored) { }
             }
@@ -190,7 +195,7 @@ public final class AlarmStore {
         if (base.isEmpty() || token.isEmpty()) return;
         long ring = cfg.optBoolean("syncPhoneAlarm", false) ? nextSystemAlarm(ctx) : 0;
         long start = ring > 0 ? ring - cfg.optInt("minutesBefore", 60) * 60_000L : 0;
-        String sig = start + "|" + cfg.optInt("minutesBefore", 60) + "|" + cfg.optString("color");
+        String sig = start + "|" + cfg.optInt("minutesBefore", 60) + "|" + cfg.optString("color") + "|" + cfg.optInt("endBrightness", 70) + "|" + cfg.optBoolean("flash", false);
         if (sig.equals(prefs(ctx).getString("reported", ""))) return;
         new Thread(() -> {
             try {
@@ -198,6 +203,8 @@ public final class AlarmStore {
                 body.put("at", start > 0 ? start : JSONObject.NULL);
                 body.put("minutes", cfg.optInt("minutesBefore", 60));
                 body.put("color", cfg.optString("color", "#ff8a30"));
+                body.put("endBrightness", cfg.optInt("endBrightness", 70));
+                body.put("flash", cfg.optBoolean("flash", false));
                 HttpURLConnection c = (HttpURLConnection) new URL(base + "/api/phone-alarm").openConnection();
                 c.setConnectTimeout(4000);
                 c.setReadTimeout(4000);

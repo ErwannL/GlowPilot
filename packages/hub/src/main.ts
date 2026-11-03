@@ -245,7 +245,7 @@ async function onMessage(client: string, m: HubMessage) {
     case 'alarmStop': lights.forEach((l) => l.engine.stopAlarm()); break;
     case 'phoneAlarm': {
       const rest = state.schedules.filter((x) => x.id !== 'phone-alarm');
-      state.schedules = m.at == null ? rest : [...rest, { id: 'phone-alarm', name: `Phone alarm (${client})`, enabled: true, time: '', days: [], onceAt: m.at, action: { type: 'alarm', minutes: m.minutes, color: m.color } }];
+      state.schedules = m.at == null ? rest : [...rest, { id: 'phone-alarm', name: `Phone alarm (${client})`, enabled: true, time: '', days: [], onceAt: m.at, action: { type: 'alarm', minutes: m.minutes, color: m.color, endBrightness: m.endBrightness ?? 70, flashDuringBuildup: !!m.flash, rhythm: m.flash ? 'flash' : 'steady' } }];
       break;
     }
     case 'scanLights': {

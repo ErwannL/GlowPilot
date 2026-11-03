@@ -21,7 +21,7 @@ export type ClientMessage =
   | { t: 'requestOwnership' }
   | { t: 'releaseOwnership' }
   /** From the phone (HTTP /api/phone-alarm): start a light alarm at `at` (ms), or remove it (null). */
-  | { t: 'phoneAlarm'; at: number | null; minutes: number; color: string }
+  | { t: 'phoneAlarm'; at: number | null; minutes: number; color: string; endBrightness?: number; flash?: boolean }
   /** From the phone's Stop button (HTTP /api/alarm-stop): stop ringing lights, leave them steady. */
   | { t: 'alarmStop' };
 

@@ -102,7 +102,7 @@ test('alarm API for the phone: token required, status and phone alarm', async ()
   assert.deepStrictEqual(await (await fetch(`${base}/api/status`, { headers: auth })).json(), { connected: true, alarmActive: true });
   const r = await fetch(`${base}/api/phone-alarm`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify({ at: 1790000000000, minutes: 45, color: '#ff0000' }) });
   assert.strictEqual(r.status, 200);
-  assert.deepStrictEqual(received, [['Phone', { t: 'phoneAlarm', at: 1790000000000, minutes: 45, color: '#ff0000' }]]);
+  assert.deepStrictEqual(received, [['Phone', { t: 'phoneAlarm', at: 1790000000000, minutes: 45, color: '#ff0000', endBrightness: 70, flash: false }]]);
   api.stop();
 });
 

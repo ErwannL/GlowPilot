@@ -159,6 +159,7 @@ public class AlarmService extends Service {
         if (f >= 1) {
             String rhythm = alarm.optString("rhythm", "flash");
             if ("music".equals(rhythm) && visualizer != null) return new double[]{Math.max(0.12, hi * musicLevel), 1};
+            if ("steady".equals(rhythm)) return new double[]{hi, 1};
             if ("flash".equals(rhythm)) return new double[]{hi, el % 400 < 200 ? 1 : 0};
             double half = 1000 - 880 * Math.max(0, Math.min(100, alarm.optInt("blinkSpeed", 50))) / 100.0;
             if (alarm.optBoolean("accelerate", true)) half = Math.max(80, half * (1 - 0.7 * Math.min(1, (el - total) / 300_000.0)));

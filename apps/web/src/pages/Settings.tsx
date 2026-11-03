@@ -5,7 +5,7 @@ import { discoverDesktop } from '../discovery';
 import { GlowAlarm, phoneAlarmsAvailable } from '../phoneAlarm';
 import { NoyauCard } from '../components/NoyauCard';
 import { CapacitorBleTransport } from '../transports/capacitor';
-import { Badge, Button, Card, Field, inputCls, PageHeader, Toggle } from '../components/ui';
+import { Badge, Button, Card, Field, inputCls, PageHeader, Slider, Toggle } from '../components/ui';
 import { APP_VERSION } from '../components/UpdateBanner';
 
 export function SettingsPage() {
@@ -179,6 +179,11 @@ function PhoneAlarmCard() {
               </select>
             </Field>
             <Field label="Colour"><input type="color" className="h-11 w-full rounded-xl bg-transparent" value={st.phoneAlarmColor} onChange={(e) => store.updateSettings({ phoneAlarmColor: e.target.value })} /></Field>
+            <Slider label="Intensity when the alarm rings" min={5} value={st.phoneAlarmBrightness} onChange={(phoneAlarmBrightness) => store.updateSettings({ phoneAlarmBrightness })} />
+            <label className="flex items-center justify-between gap-3 rounded-xl bg-white/5 px-3 text-sm">
+              <span>Flash<span className="block text-xs text-white/40">{st.phoneAlarmFlash ? 'Flashes from halfway, faster and faster' : 'Rises gently, then stays on'}</span></span>
+              <Toggle on={st.phoneAlarmFlash} onChange={(phoneAlarmFlash) => store.updateSettings({ phoneAlarmFlash })} />
+            </label>
           </div>
         )}
         <div className="rounded-xl bg-white/5 p-3 text-xs">

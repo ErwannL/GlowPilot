@@ -19,8 +19,9 @@ export type ScheduleAction =
 
 /** How a wake-up alarm looks and sounds. Every field is optional (defaults in ALARM_DEFAULTS). */
 export interface AlarmOptions {
-  /** After the build-up: 'flash' = flashes faster and faster (classic), 'blink' = steady rhythm you choose, 'music' = pulses with the music (phone). */
-  rhythm?: 'flash' | 'blink' | 'music';
+  /** After the build-up: 'flash' = flashes faster and faster (classic), 'blink' = a rhythm you choose,
+   * 'music' = pulses with the music (phone), 'steady' = stays on, no flashing. */
+  rhythm?: 'flash' | 'blink' | 'music' | 'steady';
   /** 0–100: speed of the 'blink' rhythm. */
   blinkSpeed?: number;
   /** 'blink' rhythm gets faster over 5 minutes. */

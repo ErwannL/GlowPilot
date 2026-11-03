@@ -100,6 +100,9 @@ export interface Settings {
   phoneAlarmSync: boolean;
   phoneAlarmMinutes: number;
   phoneAlarmColor: string;
+  /** Synced alarm: final intensity (%) and whether it flashes. Gentle by default. */
+  phoneAlarmBrightness: number;
+  phoneAlarmFlash: boolean;
   /** Noyau (for the phone's "Choose from Noyau" alarm music). */
   noyauUrl: string;
   noyauToken: string;
@@ -241,6 +244,8 @@ const defaultSettings: Settings = {
   phoneAlarmSync: true,
   phoneAlarmMinutes: 60,
   phoneAlarmColor: '#ff8a30',
+  phoneAlarmBrightness: 70,
+  phoneAlarmFlash: false,
   noyauUrl: 'https://noyau.unicorn-geological.ts.net',
   noyauToken: '',
   automationEnabled: true,
@@ -446,6 +451,8 @@ class Store {
         syncPhoneAlarm: s.settings.phoneAlarmSync,
         minutesBefore: s.settings.phoneAlarmMinutes,
         color: s.settings.phoneAlarmColor,
+        endBrightness: s.settings.phoneAlarmBrightness,
+        flash: s.settings.phoneAlarmFlash,
       }).then(async (r) => {
         const { GlowAlarm } = await import('./phoneAlarm');
         const sys = await GlowAlarm.nextSystemAlarm().catch(() => ({ at: null, app: null }));
@@ -994,7 +1001,7 @@ class Store {
         const rest = this.state.schedules.filter((x) => x.id !== 'phone-alarm');
         this.saveSchedules(msg.at == null ? rest : [...rest, {
           id: 'phone-alarm', name: `Phone alarm (${client})`, enabled: true, time: '', days: [], onceAt: msg.at,
-          action: { type: 'alarm', minutes: msg.minutes, color: msg.color },
+          action: { type: 'alarm', minutes: msg.minutes, color: msg.color, endBrightness: msg.endBrightness ?? 70, flashDuringBuildup: !!msg.flash, rhythm: msg.flash ? 'flash' : 'steady' },
         }]);
       }
       else if (msg.t === 'requestOwnership') {

@@ -91,8 +91,8 @@ export function AlarmEditor({ a, onChange, time }: { a: AlarmAction; onChange: (
 
       <div className="border-t border-white/10 pt-3 text-sm font-semibold">2 · Then it rings, until you press Stop</div>
       <Field label="Light rhythm while ringing">
-        <div className="grid grid-cols-3 gap-2">
-          {([['flash', '⚡ Fast flashing'], ['blink', '💡 My rhythm'], ['music', '🎵 With the music']] as const).map(([id, label]) => (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {([['steady', '🌅 Stay on'], ['flash', '⚡ Fast flashing'], ['blink', '💡 My rhythm'], ['music', '🎵 With the music']] as const).map(([id, label]) => (
             <button key={id} onClick={() => void chooseRhythm(id)}
               className={`rounded-xl border px-2 py-2 text-xs ${o.rhythm === id ? 'border-violet-400/60 bg-violet-500/20' : 'border-white/10 bg-white/5'}`}>{label}</button>
           ))}
