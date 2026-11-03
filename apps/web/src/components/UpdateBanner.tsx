@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { desktop, useStore } from '../store';
+import { GlowAlarm } from '../phoneAlarm';
 import { Button } from './ui';
 
 declare const __APP_VERSION__: string;
@@ -24,6 +25,23 @@ export function compareVersions(a: string, b: string): number {
 export function UpdateBanner() {
   const desk = useStore((s) => s.update);
   const [apk, setApk] = useState<{ version: string; url: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [hint, setHint] = useState<string | null>(null);
+  // Real Android update: the app downloads the APK and opens Android's "update this app" screen,
+  // so data, permissions and the icon's place are kept (never uninstall).
+  const install = async () => {
+    if (!apk) return;
+    setBusy(true);
+    setHint(null);
+    try {
+      await GlowAlarm.installUpdate({ url: apk.url });
+    } catch (e) {
+      const m = (e as Error).message;
+      setHint(m === 'allow-install' ? 'Allow "Install unknown apps" for GlowPilot in the screen that just opened, come back, and tap Update again. Android asks only once.' : m);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (desktop) return;
@@ -43,8 +61,8 @@ export function UpdateBanner() {
 
   if (apk)
     return (
-      <Bar text={`GlowPilot ${apk.version} is available.`}>
-        <Button variant="primary" onClick={() => window.open(apk.url, '_blank')}>Download & install</Button>
+      <Bar text={`GlowPilot ${apk.version} is available.${hint ? ' ' + hint : ' It updates in place: your settings and permissions stay.'}`}>
+        <Button variant="primary" disabled={busy} onClick={() => void install()}>{busy ? 'Downloading…' : 'Update'}</Button>
       </Bar>
     );
   if (desk?.state === 'ready')

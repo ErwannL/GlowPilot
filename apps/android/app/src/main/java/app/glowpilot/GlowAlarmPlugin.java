@@ -181,6 +181,56 @@ public class GlowAlarmPlugin extends Plugin {
         }
     }
 
+    /**
+     * In-app update: download the new APK from GitHub and hand it to Android's installer. Same package and
+     * same signing key, so Android shows "update this app" and keeps data, permissions and the home-screen
+     * icon. The first time, Android asks to allow GlowPilot to install updates (kept afterwards).
+     */
+    @PluginMethod
+    public void installUpdate(PluginCall call) {
+        String url = call.getString("url", "");
+        if (!url.startsWith("https://github.com/ErwannL/GlowPilot/releases/download/")) { call.reject("unexpected update URL"); return; }
+        if (Build.VERSION.SDK_INT >= 26 && !getContext().getPackageManager().canRequestPackageInstalls()) {
+            Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getContext().getPackageName()));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(i);
+            call.reject("allow-install");
+            return;
+        }
+        try {
+            java.io.File dir = new java.io.File(getContext().getCacheDir(), "updates");
+            if (!dir.exists() && !dir.mkdirs()) throw new Exception("cannot create folder");
+            java.io.File apk = new java.io.File(dir, "GlowPilot-update.apk");
+            java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            c.setInstanceFollowRedirects(true);
+            c.setConnectTimeout(10000);
+            c.setReadTimeout(60000);
+            int code = c.getResponseCode();
+            // GitHub redirects release downloads to its CDN (another host): follow it by hand.
+            for (int hops = 0; (code == 301 || code == 302 || code == 307 || code == 308) && hops < 5; hops++) {
+                String next = c.getHeaderField("Location");
+                c.disconnect();
+                c = (java.net.HttpURLConnection) new java.net.URL(next).openConnection();
+                c.setConnectTimeout(10000);
+                c.setReadTimeout(60000);
+                code = c.getResponseCode();
+            }
+            if (code != 200) throw new Exception("download answered " + code);
+            try (java.io.InputStream in = c.getInputStream(); java.io.OutputStream os = new java.io.FileOutputStream(apk)) {
+                byte[] buf = new byte[64 * 1024];
+                int n;
+                while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+            }
+            Uri uri = androidx.core.content.FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", apk);
+            Intent install = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(install);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Update failed: " + e.getMessage());
+        }
+    }
+
     /** Asked once, from the alarm editor, when the user chooses "lights pulse with the music". */
     @PluginMethod
     public void ensureMicrophone(PluginCall call) {
