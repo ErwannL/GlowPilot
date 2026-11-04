@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { hsvToRgb, rgbToHex, rgbToHsv, type RGB } from '@glowpilot/core';
 import type { ConnectionStatus } from '@glowpilot/core';
 
@@ -169,15 +170,18 @@ export function Badge({ children, tone = 'neutral' }: { children: ReactNode; ton
 
 export function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: ReactNode }) {
   if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-6" onClick={onClose}>
-      <div className="gp-in max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-t-3xl border border-white/10 bg-ink-850 p-6 sm:rounded-3xl" onClick={(e) => e.stopPropagation()}>
+  // Portal to <body>: inside <main> (its own stacking layer) the mobile bottom bar covered the
+  // dialog's Save button. Extra bottom padding keeps the last buttons above the system bar.
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-6" onClick={onClose}>
+      <div className="gp-in max-h-[90dvh] w-full max-w-xl overflow-y-auto overscroll-contain rounded-t-3xl border border-white/10 bg-ink-850 p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:rounded-3xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-lg font-semibold">{title}</h2>
           <button onClick={onClose} className="rounded-full p-2 text-white/50 hover:bg-white/10" aria-label="Close">✕</button>
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

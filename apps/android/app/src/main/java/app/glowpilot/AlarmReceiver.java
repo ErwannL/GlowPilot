@@ -14,10 +14,11 @@ public class AlarmReceiver extends BroadcastReceiver {
         String action = intent.getAction();
         if (AlarmStore.ACTION_FIRE.equals(action)) {
             Intent svc = new Intent(ctx, AlarmService.class).putExtra("alarm", intent.getStringExtra("alarm"));
+            AlarmStore.log(ctx, "alarm fired: " + intent.getStringExtra("alarm"));
             try {
                 ContextCompat.startForegroundService(ctx, svc);
             } catch (Exception e) {
-                Log.e(AlarmStore.TAG, "could not start the alarm service", e);
+                AlarmStore.log(ctx, "could not start the alarm service: " + e);
             }
         }
         // Every event is a good moment to re-arm (next occurrence, new Clock alarm, after reboot).

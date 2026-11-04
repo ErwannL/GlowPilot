@@ -6,7 +6,8 @@ import { GlowAlarm, phoneAlarmsAvailable } from '../phoneAlarm';
 import { NoyauCard } from '../components/NoyauCard';
 import { CapacitorBleTransport } from '../transports/capacitor';
 import { Badge, Button, Card, Field, inputCls, PageHeader, Slider, Toggle } from '../components/ui';
-import { APP_VERSION } from '../components/UpdateBanner';
+import { AndroidUpdateCheck, APP_VERSION } from '../components/UpdateBanner';
+import { Modal } from '../components/ui';
 
 export function SettingsPage() {
   const s = useStore((x) => x);
@@ -94,6 +95,8 @@ export function SettingsPage() {
 
       <NoyauCard />
 
+      {phoneAlarmsAvailable() && <DiagnosticsCard />}
+
       <Card title="Preferences">
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="This device's name (shown on the desktop)"><input className={inputCls} value={s.settings.clientName} onChange={(e) => store.updateSettings({ clientName: e.target.value })} /></Field>
@@ -117,6 +120,7 @@ export function SettingsPage() {
               {s.update?.state === 'ready' && <Button variant="primary" onClick={() => desktop!.installUpdate?.()}>Restart & update</Button>}
             </div>
           )}
+          {phoneAlarmsAvailable() && <AndroidUpdateCheck />}
           <div>Protocol research credits: Rxflex/LotusLantern (MIT), chameleonbr/LED_UNION (MIT), MikitaLeush/led-control, razibit/Lotus-Lantern-for-Windows-PC.</div>
         </div>
       </Card>
@@ -234,6 +238,22 @@ function AlarmReadiness() {
           </div>
         ))}
       </div>
+    </Card>
+  );
+}
+
+/** Android: what the phone did on its own (alarms, sleep timer, connections), to explain problems afterwards. */
+function DiagnosticsCard() {
+  const [text, setText] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  return (
+    <Card title="Diagnostics">
+      <p className="text-sm text-white/55">A log of what the phone did by itself: alarms, sleep timer, Bluetooth connections.</p>
+      <Button className="mt-3" onClick={() => void GlowAlarm.readLog().then((r) => setText(r.text || '(empty)'))}>Show log</Button>
+      <Modal open={text !== null} onClose={() => setText(null)} title="Phone log">
+        <pre className="max-h-[60dvh] overflow-auto whitespace-pre-wrap rounded-xl bg-black/30 p-3 text-[11px] text-white/75">{text?.split('\n').reverse().join('\n')}</pre>
+        <Button className="mt-3" variant="primary" onClick={() => void navigator.clipboard.writeText(text ?? '').then(() => setCopied(true))}>{copied ? 'Copied' : 'Copy'}</Button>
+      </Modal>
     </Card>
   );
 }

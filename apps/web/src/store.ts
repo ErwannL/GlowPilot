@@ -8,7 +8,7 @@ import {
 } from '@glowpilot/core';
 import { WebBluetoothTransport } from './transports/webBluetooth';
 import { CapacitorBleTransport } from './transports/capacitor';
-import { alarmsForPhone, phoneAlarmsAvailable, syncPhoneAlarms } from './phoneAlarm';
+import { alarmsForPhone, phoneAlarmsAvailable, phoneLog, syncPhoneAlarms } from './phoneAlarm';
 
 /** Bridge exposed by GlowPilot Desktop's preload script. Absent in a normal browser. */
 export interface DesktopBridge {
@@ -278,6 +278,7 @@ class Light {
       transport.onState((s) => { this.sim = s; this.onChange(); });
     }
     this.controller.on('status', (s) => {
+      if (s !== this.status) phoneLog(`${device.name}: ${s}`);
       this.status = s;
       if (s === 'connected') {
         this.error = null;
@@ -289,7 +290,7 @@ class Light {
       }
       this.onChange();
     });
-    this.controller.on('error', (e) => { this.error = e; this.onChange(); });
+    this.controller.on('error', (e) => { this.error = e; phoneLog(`${device.name}: ${e}`); this.onChange(); });
     this.controller.on('ack', (b) => onLog('ack', b));
     this.controller.on('external', (b) => this.onExternal?.(b));
     const write = transport.write.bind(transport);
@@ -413,6 +414,10 @@ class Store {
     this.automation.rules = this.state.rules;
     this.setupMode(settings.mode);
     this.setupDesktop();
+    // A sleep timer set before the app was closed: show it again (Android runs it natively anyway).
+    const sl = load<{ at: number } | null>('sleep', null);
+    if (sl && sl.at > Date.now()) this.lights.forEach((l) => l.engine.setSleepTimer((sl.at - Date.now()) / 60_000));
+    phoneLog(`app started (${settings.mode} mode)`);
     // Started in Direct Bluetooth: make sure the hub/PC we're paired with isn't fighting for the lights.
     if (settings.mode === 'local') void this.tellPeer({ t: 'requestOwnership' });
     window.__glowpilotAutoconnect = () => void this.autoconnectNext();
@@ -453,6 +458,7 @@ class Store {
         color: s.settings.phoneAlarmColor,
         endBrightness: s.settings.phoneAlarmBrightness,
         flash: s.settings.phoneAlarmFlash,
+        sleep: s.mode === 'local' ? ((x) => (x && x.at > Date.now() ? x : null))(load<{ at: number; brightness: number } | null>('sleep', null)) : null,
       }).then(async (r) => {
         const { GlowAlarm } = await import('./phoneAlarm');
         const sys = await GlowAlarm.nextSystemAlarm().catch(() => ({ at: null, app: null }));
@@ -796,6 +802,13 @@ class Store {
     const manual = cmd.type !== 'scene' || (cmd.source ?? 'manual') === 'manual';
     if (this.state.paused && manual) this.setPaused(null);
     if (this.state.paused) return; // automation waits while paused (schedules like the alarm still run)
+    if (cmd.type === 'sleepTimer') {
+      // Remember it (survives closing the app) and, on Android, let the native module do the fade-out.
+      const at = cmd.minutes ? Date.now() + cmd.minutes * 60_000 : 0;
+      save('sleep', at ? { at, brightness: this.targetLights()[0]?.controller.state.brightness ?? 80 } : null);
+      phoneLog(at ? `sleep timer set for ${new Date(at).toLocaleTimeString()}` : 'sleep timer cancelled');
+      this.schedulePhoneSync();
+    }
     if (cmd.type === 'scene' && (cmd.source ?? 'manual') === 'manual' && this.automation.activeRuleId)
       this.automation.manualOverride(this.state.settings.overrideMinutes);
     if (this.music && (cmd.type === 'power' || cmd.type === 'scene' || cmd.type === 'brightness')) this.stopMusic(false);

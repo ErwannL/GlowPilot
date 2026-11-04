@@ -104,8 +104,30 @@ public class AlarmService extends Service {
         return START_NOT_STICKY;
     }
 
+    /** Sleep timer: fade the light out over a minute, then switch it off. */
+    private void runSleep(JSONObject cfg) throws Exception {
+        update("Sleep timer · lights going off", false);
+        AlarmStore.log(this, "sleep timer: fading out");
+        for (int i = 0; i < 6 && !stopped && writeChar == null; i++) if (!connect(cfg)) sleep(3000);
+        if (writeChar == null) { AlarmStore.log(this, "sleep timer: lights not reachable"); return; }
+        int from = Math.max(1, Math.min(100, alarm.optInt("brightness", 80)));
+        for (int s = 0; s <= 30 && !stopped; s++) {
+            int level = (int) Math.round(from * (1 - s / 30.0));
+            write(frame(0x01, Math.max(level, 0), 0xff, 0xff, 0xff, 0x00));
+            sleep(2000);
+        }
+        write(frame(0x04, 0, 0, 0, 0xff, 0x00)); // power off
+        sleep(300);
+        // Leave brightness back at its value so the next "on" isn't black.
+        write(frame(0x01, from, 0xff, 0xff, 0xff, 0x00));
+        sleep(200);
+        AlarmStore.log(this, "sleep timer: lights off");
+    }
+
     private void run(int minutes) throws Exception {
         JSONObject cfg = AlarmStore.config(this);
+        if ("sleep".equals(alarm.optString("kind"))) { runSleep(cfg); return; }
+        AlarmStore.log(this, "alarm start: " + alarm.optString("name", alarm.optString("id")) + ", build-up " + minutes + " min");
         long total = minutes * 60_000L;
         long start = System.currentTimeMillis();
         boolean phoneSync = AlarmStore.PHONE_ALARM_ID.equals(alarm.optString("id"));
@@ -116,6 +138,7 @@ public class AlarmService extends Service {
             for (int i = 0; i < 15 && !stopped && !"running".equals(pc); i++) { sleep(5000); pc = pcStatus(cfg); }
         }
         pcDrivesLights = "running".equals(pc);
+        AlarmStore.log(this, "PC/hub: " + pc + (pcDrivesLights ? " → it drives the lights" : " → the phone drives the lights"));
         update(pcDrivesLights ? "Wake-up lights · your PC drives them" : "Wake-up lights · from your phone", false);
 
         int rgb = Color.parseColor(alarm.optString("color", "#ff8a30"));
@@ -181,6 +204,7 @@ public class AlarmService extends Service {
     // --- ringing ---------------------------------------------------------------------------
 
     private void startRinging() {
+        AlarmStore.log(this, "ringing");
         ringing = true;
         ringTitle = alarm.optString("name", "Wake up");
         update("⏰ " + ringTitle, true);
@@ -274,6 +298,7 @@ public class AlarmService extends Service {
     private void finish() {
         if (stopped) return;
         stopped = true;
+        AlarmStore.log(this, "alarm/sleep service finished");
         ringing = false;
         stopMusic();
         AlarmActivity.closeIfOpen();
@@ -364,7 +389,8 @@ public class AlarmService extends Service {
             }
         }, BluetoothDevice.TRANSPORT_LE);
         ready.await(15, TimeUnit.SECONDS);
-        if (writeChar == null) { closeGatt(); return false; }
+        if (writeChar == null) { closeGatt(); AlarmStore.log(this, "BLE: could not connect to " + device.getAddress()); return false; }
+        AlarmStore.log(this, "BLE: connected to " + device.getAddress());
         return true;
     }
 

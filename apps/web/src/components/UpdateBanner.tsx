@@ -83,3 +83,31 @@ function Bar({ text, children }: { text: string; children?: React.ReactNode }) {
     </div>
   );
 }
+
+/** Android Settings: check GitHub now and offer the in-place update. */
+export function AndroidUpdateCheck() {
+  const [msg, setMsg] = useState('');
+  const [apk, setApk] = useState<string | null>(null);
+  const check = async () => {
+    setMsg('Checking…');
+    setApk(null);
+    try {
+      const r = await fetch(RELEASES_API, { headers: { Accept: 'application/vnd.github+json' } });
+      const rel = (await r.json()) as { tag_name: string; assets: { name: string; browser_download_url: string }[] };
+      const asset = rel.assets.find((a) => a.name.endsWith('.apk'));
+      if (asset && compareVersions(rel.tag_name, APP_VERSION) > 0) { setApk(asset.browser_download_url); setMsg(`${rel.tag_name} is available.`); }
+      else setMsg(`You're up to date (${APP_VERSION}).`);
+    } catch (e) { setMsg(`Update check failed: ${(e as Error).message}`); }
+  };
+  const install = async () => {
+    try { await GlowAlarm.installUpdate({ url: apk! }); }
+    catch (e) { const m = (e as Error).message; setMsg(m === 'allow-install' ? 'Allow "Install unknown apps" for GlowPilot, come back, and tap Update again.' : m); }
+  };
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-3">
+      <Button onClick={() => void check()}>Check for updates</Button>
+      <span className="text-xs">{msg}</span>
+      {apk && <Button variant="primary" onClick={() => void install()}>Update</Button>}
+    </div>
+  );
+}

@@ -14,6 +14,8 @@ interface GlowAlarmPlugin {
   openFullScreenSettings(): Promise<void>;
   noyauTracks(o: { url: string; token: string }): Promise<{ tracks: { id: number; title: string; artist?: string; duration_seconds?: number }[] }>;
   installUpdate(o: { url: string }): Promise<void>;
+  readLog(): Promise<{ text: string }>;
+  appendLog(o: { line: string }): Promise<void>;
   downloadNoyauTrack(o: { url: string; token: string; id: number; name: string }): Promise<{ uri: string; name: string }>;
 }
 
@@ -31,6 +33,8 @@ export interface PhoneAlarmConfig {
   color: string;
   endBrightness: number;
   flash: boolean;
+  /** Sleep timer handed to Android, so it fades the lights out even after the app is closed. */
+  sleep: { at: number; brightness: number } | null;
 }
 
 export const GlowAlarm = registerPlugin<GlowAlarmPlugin>('GlowAlarm');
@@ -76,4 +80,9 @@ export async function syncPhoneAlarms(cfg: PhoneAlarmConfig): Promise<{ nextAt: 
     await GlowAlarm.ensurePermissions().catch(() => null);
   }
   return GlowAlarm.configure(cfg).catch(() => null);
+}
+
+/** Android: add a line to the on-phone log (Settings → Diagnostics). */
+export function phoneLog(line: string) {
+  if (phoneAlarmsAvailable()) void GlowAlarm.appendLog({ line }).catch(() => {});
 }

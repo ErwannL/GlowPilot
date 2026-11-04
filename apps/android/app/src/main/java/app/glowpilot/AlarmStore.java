@@ -32,6 +32,32 @@ public final class AlarmStore {
 
     private AlarmStore() {}
 
+    /**
+     * Small on-phone log (alarms, sleep timer, connections) so problems can be explained afterwards.
+     * Kept in the app's files, newest last, trimmed to ~150 KB. Shown in Settings → Diagnostics.
+     */
+    static synchronized void log(Context ctx, String msg) {
+        Log.i(TAG, msg);
+        try {
+            java.io.File f = new java.io.File(ctx.getFilesDir(), "glowpilot-log.txt");
+            if (f.exists() && f.length() > 150_000) {
+                byte[] all = java.nio.file.Files.readAllBytes(f.toPath());
+                java.nio.file.Files.write(f.toPath(), java.util.Arrays.copyOfRange(all, all.length - 80_000, all.length));
+            }
+            String line = new java.text.SimpleDateFormat("dd/MM HH:mm:ss", java.util.Locale.FRANCE).format(new java.util.Date()) + "  " + msg + "\n";
+            try (java.io.FileWriter w = new java.io.FileWriter(f, true)) { w.write(line); }
+        } catch (Exception ignored) { }
+    }
+
+    static String readLog(Context ctx) {
+        try {
+            java.io.File f = new java.io.File(ctx.getFilesDir(), "glowpilot-log.txt");
+            return f.exists() ? new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8) : "";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     static JSONObject config(Context ctx) {
         try {
             return new JSONObject(prefs(ctx).getString("config", "{}"));
@@ -117,6 +143,18 @@ public final class AlarmStore {
         JSONArray out = new JSONArray();
         JSONArray list = cfg.optJSONArray("alarms");
         if (list != null) for (int i = 0; i < list.length(); i++) out.put(list.optJSONObject(i));
+        // Sleep timer: runs natively so it works after the app is closed.
+        JSONObject sleep = cfg.optJSONObject("sleep");
+        if (sleep != null && sleep.optLong("at", 0) > System.currentTimeMillis()) {
+            try {
+                JSONObject a = new JSONObject();
+                a.put("id", "sleep");
+                a.put("kind", "sleep");
+                a.put("onceAt", sleep.optLong("at"));
+                a.put("brightness", sleep.optInt("brightness", 80));
+                out.put(a);
+            } catch (Exception ignored) { }
+        }
         if (cfg.optBoolean("syncPhoneAlarm", false)) {
             long ring = nextSystemAlarm(ctx);
             if (ring > 0) {
@@ -160,7 +198,7 @@ public final class AlarmStore {
             if (at <= 0) continue;
             PendingIntent pi = firePending(ctx, a.optString("id"), a);
             boolean exact = Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms();
-            boolean own = !PHONE_ALARM_ID.equals(a.optString("id"));
+            boolean own = !PHONE_ALARM_ID.equals(a.optString("id")) && !"sleep".equals(a.optString("id"));
             if (exact && own) {
                 // GlowPilot's own alarm clock: highest priority (like the Clock app), ⏰ icon in the status bar.
                 PendingIntent show = PendingIntent.getActivity(ctx, 7, new Intent(ctx, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
@@ -178,7 +216,7 @@ public final class AlarmStore {
         am.setInexactRepeating(AlarmManager.RTC_WAKEUP, now + AlarmManager.INTERVAL_HOUR * 3, AlarmManager.INTERVAL_HOUR * 3, sync);
 
         reportPhoneAlarm(ctx, cfg);
-        Log.i(TAG, "armed " + nowArmed.length() + " alarm(s), next at " + soonest);
+        log(ctx, "armed " + nowArmed.length() + " alarm(s)" + (soonest > 0 ? ", next at " + new java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.FRANCE).format(new java.util.Date(soonest)) : ""));
         return soonest;
     }
 

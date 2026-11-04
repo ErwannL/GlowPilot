@@ -69,6 +69,19 @@ public class GlowAlarmPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void readLog(PluginCall call) {
+        JSObject r = new JSObject();
+        r.put("text", AlarmStore.readLog(getContext()));
+        call.resolve(r);
+    }
+
+    @PluginMethod
+    public void appendLog(PluginCall call) {
+        AlarmStore.log(getContext(), "app: " + call.getString("line", ""));
+        call.resolve();
+    }
+
+    @PluginMethod
     public void stop(PluginCall call) {
         getContext().startService(new Intent(getContext(), AlarmService.class).setAction(AlarmService.ACTION_STOP));
         call.resolve();
