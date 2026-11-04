@@ -8,6 +8,7 @@ import {
 } from '@glowpilot/core';
 import { WebBluetoothTransport } from './transports/webBluetooth';
 import { CapacitorBleTransport } from './transports/capacitor';
+import { askOthersToYield } from './discovery';
 import { alarmsForPhone, phoneAlarmsAvailable, phoneLog, syncPhoneAlarms } from './phoneAlarm';
 
 /** Bridge exposed by GlowPilot Desktop's preload script. Absent in a normal browser. */
@@ -256,6 +257,14 @@ const EMPTY_SNAPSHOT: EngineSnapshot = { light: { ...DEFAULT_STATE }, activeScen
 
 // --- one physical light ------------------------------------------------------------
 
+let lastYieldAsk = 0;
+/** Direct Bluetooth and the light can't be reached: maybe the hub/PC grabbed it while the app was closed. */
+function yieldIfHeld() {
+  if (store.state.mode !== 'local' || Date.now() - lastYieldAsk < 60_000) return;
+  lastYieldAsk = Date.now();
+  void askOthersToYield().then((n) => n && phoneLog(`asked ${n} other GlowPilot(s) holding the light to let go`));
+}
+
 class Light {
   controller: DeviceController;
   engine: GlowEngine;
@@ -279,6 +288,7 @@ class Light {
     }
     this.controller.on('status', (s) => {
       if (s !== this.status) phoneLog(`${device.name}: ${s}`);
+      if (s === 'reconnecting' || s === 'error') yieldIfHeld();
       this.status = s;
       if (s === 'connected') {
         this.error = null;
@@ -419,7 +429,7 @@ class Store {
     if (sl && sl.at > Date.now()) this.lights.forEach((l) => l.engine.setSleepTimer((sl.at - Date.now()) / 60_000));
     phoneLog(`app started (${settings.mode} mode)`);
     // Started in Direct Bluetooth: make sure the hub/PC we're paired with isn't fighting for the lights.
-    if (settings.mode === 'local') void this.tellPeer({ t: 'requestOwnership' });
+    if (settings.mode === 'local') { void this.tellPeer({ t: 'requestOwnership' }); lastYieldAsk = Date.now(); void askOthersToYield(); }
     window.__glowpilotAutoconnect = () => void this.autoconnectNext();
     this.syncWakeTasks();
     this.schedulePhoneSync();

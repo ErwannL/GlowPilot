@@ -85,6 +85,13 @@ class LocalApiServer {
         if (a !== '127.0.0.1' && a !== '::1') return res.writeHead(403).end();
         return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(this.pairingInfo()));
       }
+      // A phone in Direct Bluetooth that can't reach the light asks whoever holds it to step aside.
+      // No pairing needed (home network only): the worst it can do is make this GlowPilot let go of the light.
+      if (req.method === 'POST' && urlPath === '/api/yield') {
+        const who = 'phone ' + String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+        this.opts.onMessage(who, { t: 'requestOwnership' });
+        return res.writeHead(200, { 'access-control-allow-origin': '*' }).end();
+      }
       if (urlPath.startsWith('/api/')) return this.handleApi(req, res, urlPath);
       const file = path.normalize(path.join(this.opts.staticDir, urlPath === '/' ? 'index.html' : urlPath));
       if (!file.startsWith(path.normalize(this.opts.staticDir))) { res.writeHead(403).end(); return; }

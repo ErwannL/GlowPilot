@@ -54,3 +54,13 @@ export async function discoverDesktop(onProgress?: (done: number, total: number)
 
 /** The /24 subnet of a ws://a.b.c.d:port URL, to rescan quickly around a known instance. */
 export const subnetOf = (url: string) => /^wss?:\/\/(\d+\.\d+\.\d+)\.\d+/.exec(url)?.[1] ?? null;
+
+/**
+ * Direct Bluetooth: the light accepts one connection and goes invisible while it has one.
+ * Ask every GlowPilot (hub, PC) that holds it to let go. Returns how many were asked.
+ */
+export async function askOthersToYield(): Promise<number> {
+  const holders = (await discoverAll(['192.168.1', '192.168.0'])).filter((x) => x.lightsConnected);
+  await Promise.all(holders.map((x) => fetch(`${x.url.replace(/^ws/, 'http')}/api/yield`, { method: 'POST', signal: AbortSignal.timeout(3000) }).catch(() => {})));
+  return holders.length;
+}
