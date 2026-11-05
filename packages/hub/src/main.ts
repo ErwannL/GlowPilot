@@ -212,7 +212,7 @@ function takeBack(why: string) {
 // Ownership expiry, and gentler retries for a light that has been out of reach for a long time
 // (each attempt scans the air for 20 s; no point doing that every 30 s all night).
 setInterval(() => {
-  if (ownership && Date.now() > ownership.until) takeBack('2 h without release');
+  if (ownership && Date.now() > ownership.until) takeBack('24 h without release');
   for (const l of lights) l.controller.maxBackoffMs = Date.now() - l.lastConnectedAt > 10 * 60_000 ? 120_000 : 30_000;
 }, 30_000);
 let scanning = false;
@@ -295,8 +295,8 @@ async function onMessage(client: string, m: HubMessage) {
     }
     case 'requestOwnership': {
       // A phone/PC takes the Bluetooth link (e.g. "Take over Bluetooth"): step aside instead of fighting
-      // for the single connection. Back after releaseOwnership, or after 2 hours at most.
-      ownership = { client, until: Date.now() + 2 * 60 * 60_000 };
+      // for the single connection. Back after releaseOwnership, or after 24 hours (a phone master asks again whenever it can't reach the light).
+      ownership = { client, until: Date.now() + 24 * 60 * 60_000 };
       for (const l of lights) { l.controller.autoReconnect = false; void l.controller.disconnect(); }
       log(`[${client}] took the lights over: hub stepping aside`);
       break;

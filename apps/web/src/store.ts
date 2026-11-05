@@ -300,7 +300,7 @@ class Light {
       }
       this.onChange();
     });
-    this.controller.on('error', (e) => { this.error = e; phoneLog(`${device.name}: ${e}`); this.onChange(); });
+    this.controller.on('error', (e) => { this.error = e; phoneLog(`${device.name}: ${e}`); yieldIfHeld(); this.onChange(); });
     this.controller.on('ack', (b) => onLog('ack', b));
     this.controller.on('external', (b) => this.onExternal?.(b));
     const write = transport.write.bind(transport);
@@ -342,6 +342,9 @@ class Light {
   restoreLook() {
     const look = load<{ sceneId: string | null; effect: EngineSnapshot['softwareEffect']; ramp: string | null } | null>(`look.${this.device.id}`, null);
     if (!look || !this.controller.state.on || look.ramp === 'alarm') return;
+    // In the background (phone screen off, app reconnecting on its own) the light may have been switched
+    // off meanwhile (sleep timer, another device): never switch it back on unseen.
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') { phoneLog(`${this.name}: reconnected in the background, look not restored`); return; }
     if (look.sceneId && this.engine.scenes.some((x) => x.id === look.sceneId)) this.engine.exec({ type: 'scene', sceneId: look.sceneId, source: 'schedule' });
     else if (look.effect) this.engine.exec({ type: 'softwareEffect', effect: look.effect });
   }
@@ -434,7 +437,16 @@ class Store {
     this.syncWakeTasks();
     this.schedulePhoneSync();
     // The phone's alarm clock may have changed while the app was in the background.
-    document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && this.schedulePhoneSync());
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      this.schedulePhoneSync();
+      // Back on screen in Direct Bluetooth and the light is lost: get it back now, not after the backoff.
+      if (this.state.mode === 'local' && this.lights.some((l) => l.status !== 'connected')) {
+        lastYieldAsk = 0;
+        yieldIfHeld();
+        setTimeout(() => this.lights.forEach((l) => l.status !== 'connected' && l.controller.reconnectNow()), 3000);
+      }
+    });
   }
 
   subscribe = (cb: () => void) => {
