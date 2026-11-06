@@ -100,8 +100,11 @@ public final class AlarmStore {
             }
             Log.i(TAG, "ignoring next alarm from " + pkg + " (not a clock app)");
         }
+        // Android only shows the soonest alarm. A remembered clock alarm is still believable only if it
+        // comes after the one hiding it; otherwise it was switched off since (it would be the soonest).
         long kept = p.getLong("clockAlarmAt", 0);
-        if (kept > now) return new String[]{String.valueOf(kept), p.getString("clockAlarmPkg", "")};
+        if (kept > now && info != null && kept >= info.getTriggerTime()) return new String[]{String.valueOf(kept), p.getString("clockAlarmPkg", "")};
+        if (kept != 0) p.edit().remove("clockAlarmAt").remove("clockAlarmPkg").apply();
         return null;
     }
 
@@ -198,15 +201,14 @@ public final class AlarmStore {
             if (at <= 0) continue;
             PendingIntent pi = firePending(ctx, a.optString("id"), a);
             boolean exact = Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms();
-            boolean own = !PHONE_ALARM_ID.equals(a.optString("id")) && !"sleep".equals(a.optString("id"));
-            if (exact && own) {
-                // GlowPilot's own alarm clock: highest priority (like the Clock app), ⏰ icon in the status bar.
-                PendingIntent show = PendingIntent.getActivity(ctx, 7, new Intent(ctx, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
-                am.setAlarmClock(new AlarmManager.AlarmClockInfo(at, show), pi);
-            } else if (exact) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
+            // Not setAlarmClock(): Android reports only the soonest alarm clock of all apps, so GlowPilot's own
+            // 06:00 hid the Clock app's 08:00 and the lights followed the wrong time. The ring itself still
+            // uses an alarm clock (AlarmService.showAlarmScreen).
+            if (exact) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
             else am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
             nowArmed.put(a.optString("id"));
-            if (soonest == 0 || at < soonest) soonest = at;
+            // The sleep timer is not a light alarm: don't show it as "next light alarm".
+            if (!"sleep".equals(a.optString("id")) && (soonest == 0 || at < soonest)) soonest = at;
         }
         prefs(ctx).edit().putString("armed", nowArmed.toString()).apply();
 

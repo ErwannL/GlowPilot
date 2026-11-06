@@ -72,6 +72,14 @@ describe('colour', () => {
     expect(out.g).toBeLessThan(110);
     expect(applyCalibration({ r: 0, g: 0, b: 255 }, cal)).toEqual({ r: 0, g: 0, b: 255 });
   });
+  it('dim light pulls blue down so purple does not outshine red', () => {
+    const purple = { r: 75, g: 0, b: 130 };
+    expect(applyCalibration(purple, IDENTITY_CALIBRATION, 100)).toEqual(purple);
+    const dim = applyCalibration(purple, IDENTITY_CALIBRATION, 10);
+    expect(dim.r).toBe(75);
+    expect(dim.b).toBeLessThan(80);
+    expect(applyCalibration({ r: 255, g: 0, b: 0 }, IDENTITY_CALIBRATION, 10)).toEqual({ r: 255, g: 0, b: 0 });
+  });
   it('channel order remaps pins', () => {
     const cal = { ...IDENTITY_CALIBRATION, order: 'grb' as const };
     // Strip shows green on pin 1: to show logical red, red value must go to pin 2.

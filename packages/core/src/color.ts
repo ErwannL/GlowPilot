@@ -78,10 +78,20 @@ export const DEFAULT_CALIBRATION: Calibration = {
 
 export const IDENTITY_CALIBRATION: Calibration = { gain: { r: 1, g: 1, b: 1 }, gamma: 1, warmGreenCut: 0, order: 'rgb', floor: 0 };
 
-/** Map the colour the user intends to the RGB values the strip must receive. */
-export function applyCalibration(c: RGB, cal: Calibration): RGB {
+/**
+ * Map the colour the user intends to the RGB values the strip must receive.
+ * `brightness` (controller level 0–100): in a dim room the eye is far more sensitive to blue than to red
+ * (Purkinje effect), so at low levels a red + purple scene showed a weak red and a glaring violet.
+ * Below 50 % blue, and a little green, are pulled down so colours keep the balance they have in daylight.
+ */
+export function applyCalibration(c: RGB, cal: Calibration, brightness = 100): RGB {
   const hsv = rgbToHsv(c);
   let { r, g, b } = c;
+  const dim = clamp((50 - brightness) / 50, 0, 1);
+  if (dim > 0 && hsv.s > 0.2) {
+    b *= 1 - 0.55 * dim;
+    g *= 1 - 0.25 * dim;
+  }
   // Warm band 0–70°: pull green down more strongly as saturation rises.
   if (cal.warmGreenCut > 0 && hsv.s > 0.2 && (hsv.h < 70 || hsv.h > 345)) {
     const band = hsv.h > 345 ? 0 : hsv.h / 70; // 0 at red, 1 at yellow

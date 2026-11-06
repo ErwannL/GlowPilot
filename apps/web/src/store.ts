@@ -293,9 +293,8 @@ class Light {
       if (s === 'connected') {
         this.error = null;
         if (!this.restored || this.settledForSleep) {
-          this.restored = true;
           this.settledForSleep = false;
-          this.restoreLook();
+          this.restored = this.restoreLook();
         }
       }
       this.onChange();
@@ -309,12 +308,13 @@ class Light {
       this.snapshot = snap;
       save(`light.${device.id}`, snap.light);
       // What the light is showing, so it comes back after a restart (scene, mix or GlowPilot effect).
-      if (!this.halted()) save(`look.${device.id}`, { sceneId: snap.activeSceneId, effect: snap.softwareEffect, ramp: snap.ramp?.kind ?? null });
+      // Not before the saved look was brought back: the start-up snapshot (no scene yet) used to overwrite it.
+      if (!this.halted() && this.restored) save(`look.${device.id}`, { sceneId: snap.activeSceneId, effect: snap.softwareEffect, ramp: snap.ramp?.kind ?? null });
       this.onChange();
     });
   }
 
-  private restored = false;
+  restored = false;
   /** Set when the animation was replaced by a steady colour before Windows went to sleep. */
   settledForSleep = false;
 
@@ -339,14 +339,16 @@ class Light {
     this.engine.publish();
   }
 
-  restoreLook() {
+  /** False when it must be tried again later (app in the background); true once settled. */
+  restoreLook(): boolean {
     const look = load<{ sceneId: string | null; effect: EngineSnapshot['softwareEffect']; ramp: string | null } | null>(`look.${this.device.id}`, null);
-    if (!look || !this.controller.state.on || look.ramp === 'alarm') return;
+    if (!look || !this.controller.state.on || look.ramp === 'alarm') return true;
     // In the background (phone screen off, app reconnecting on its own) the light may have been switched
     // off meanwhile (sleep timer, another device): never switch it back on unseen.
-    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') { phoneLog(`${this.name}: reconnected in the background, look not restored`); return; }
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') { phoneLog(`${this.name}: reconnected in the background, look not restored`); return false; }
     if (look.sceneId && this.engine.scenes.some((x) => x.id === look.sceneId)) this.engine.exec({ type: 'scene', sceneId: look.sceneId, source: 'schedule' });
     else if (look.effect) this.engine.exec({ type: 'softwareEffect', effect: look.effect });
+    return true;
   }
 
   /** Before quitting: replace a running GlowPilot animation with its main colour so the strip doesn't freeze on a random frame. */
@@ -440,6 +442,8 @@ class Store {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState !== 'visible') return;
       this.schedulePhoneSync();
+      // Reconnected while hidden: bring the scene back now that the user can see it.
+      this.lights.forEach((l) => { if (l.status === 'connected' && !l.restored) l.restored = l.restoreLook(); });
       // Back on screen in Direct Bluetooth and the light is lost: get it back now, not after the backoff.
       if (this.state.mode === 'local' && this.lights.some((l) => l.status !== 'connected')) {
         lastYieldAsk = 0;

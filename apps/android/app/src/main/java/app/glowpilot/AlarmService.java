@@ -91,7 +91,7 @@ public class AlarmService extends Service {
         if (worker != null) return START_NOT_STICKY;
         try { alarm = new JSONObject(intent != null && intent.getStringExtra("alarm") != null ? intent.getStringExtra("alarm") : "{}"); }
         catch (Exception e) { alarm = new JSONObject(); }
-        startForegroundCompat(build("Wake-up lights starting…", false));
+        startForegroundCompat(build("sleep".equals(alarm.optString("kind")) ? "Sleep timer · lights going off" : "Wake-up lights starting…", false));
         int minutes = Math.max(0, alarm.optInt("minutes", 60));
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "GlowPilot:alarm");
@@ -213,6 +213,19 @@ public class AlarmService extends Service {
             Vibrator v = (Vibrator) getSystemService(VIBRATOR_SERVICE);
             if (v != null && Build.VERSION.SDK_INT >= 26) v.vibrate(VibrationEffect.createWaveform(new long[]{0, 600, 900}, 0));
         }
+        showAlarmScreen();
+    }
+
+    /**
+     * The alarm screen over the lock screen. An alarm-clock activity intent is allowed to open even when
+     * "full-screen notifications" is off (Android resets that switch on some updates), like the Clock app.
+     */
+    private void showAlarmScreen() {
+        try {
+            android.app.AlarmManager am = (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
+            PendingIntent screen = PendingIntent.getActivity(this, 8, new Intent(this, AlarmActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+            if (Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms()) am.setAlarmClock(new android.app.AlarmManager.AlarmClockInfo(System.currentTimeMillis() + 300, screen), screen);
+        } catch (Exception e) { Log.w(AlarmStore.TAG, "alarm-clock screen failed", e); }
         try { startActivity(new Intent(this, AlarmActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); } catch (Exception ignored) { /* full-screen intent shows it */ }
     }
 

@@ -40,10 +40,19 @@ export class CapacitorBleTransport implements BleTransport {
     this.id = deviceId;
     this.svc = service;
     this.wc = writeChar;
-    await ble.connect(deviceId, () => {
+    const onGone = () => {
       this.connected = false;
       this.discCbs.forEach((cb) => cb());
-    }, { timeout: 15000 });
+    };
+    try {
+      await ble.connect(deviceId, onGone, { timeout: 10000 });
+    } catch (e) {
+      // After hours without seeing the light (every morning), Android forgets it and a connection by
+      // address just times out. Seeing it in a short scan refreshes that cache; then try once more.
+      await ble.disconnect(deviceId).catch(() => {});
+      if (!(await this.seen(deviceId))) throw e;
+      await ble.connect(deviceId, onGone, { timeout: 10000 });
+    }
     this.connected = true;
     if (notifyChar) {
       try {
@@ -55,6 +64,23 @@ export class CapacitorBleTransport implements BleTransport {
         /* optional */
       }
     }
+  }
+
+  /** Scan up to 6 s for this device; true as soon as it advertises. */
+  private async seen(deviceId: string): Promise<boolean> {
+    const ble = await this.ble();
+    let found = false;
+    try {
+      await new Promise<void>((resolve) => {
+        const done = setTimeout(resolve, 6000);
+        void ble.requestLEScan({}, (r) => {
+          if (r.device.deviceId.toUpperCase() === deviceId.toUpperCase()) { found = true; clearTimeout(done); resolve(); }
+        }).catch(() => { clearTimeout(done); resolve(); });
+      });
+    } finally {
+      await ble.stopLEScan().catch(() => {});
+    }
+    return found;
   }
 
   async disconnect(): Promise<void> {

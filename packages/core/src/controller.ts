@@ -201,13 +201,16 @@ export class DeviceController extends Emitter<ControllerEvents> {
   /** Raw colour for software effects: not stored as the user's chosen colour. */
   renderFrame(color: RGB): void {
     if (this.status !== 'connected') return;
-    const c = applyCalibration(color, this.calibration);
+    const c = applyCalibration(color, this.calibration, this.state.brightness);
     this.send(this.driver.rgb(c.r, c.g, c.b));
   }
 
   setBrightness(level: number): void {
+    const before = this.state.brightness;
     this.patch({ brightness: level });
     this.send(this.driver.brightness(level));
+    // The colour balance depends on the level below 50 %: resend a static colour when it changes.
+    if (this.state.controllerEffect == null && (before < 50 || level < 50) && before !== level) this.sendColor();
   }
 
   setSpeed(level: number): void {
@@ -338,7 +341,7 @@ export class DeviceController extends Emitter<ControllerEvents> {
   }
 
   private sendColor(): void {
-    const c = applyCalibration(this.state.color, this.calibration);
+    const c = applyCalibration(this.state.color, this.calibration, this.state.brightness);
     this.send(this.driver.rgb(c.r, c.g, c.b));
   }
 
