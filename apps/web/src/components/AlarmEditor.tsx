@@ -36,7 +36,7 @@ export function AlarmEditor({ a, onChange, time }: { a: AlarmAction; onChange: (
   const settings = useStore((s) => s.settings);
   const [noyau, setNoyau] = useState<null | { loading?: boolean; error?: string; tracks?: { id: number; title: string; artist?: string }[]; downloading?: number }>(null);
   const openNoyau = async () => {
-    if (!settings.noyauToken) return setNoyau({ error: 'Add your Noyau address and token in Settings → Noyau first.' });
+    if (!settings.noyauToken) return setNoyau({ error: 'Sign in to Noyau first: Settings → Noyau.' });
     setNoyau({ loading: true });
     try {
       const r = await GlowAlarm.noyauTracks({ url: settings.noyauUrl, token: settings.noyauToken });

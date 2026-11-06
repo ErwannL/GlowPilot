@@ -140,6 +140,47 @@ public class GlowAlarmPlugin extends Plugin {
         call.resolve(r);
     }
 
+    /** Sign in to Noyau once: name + password → a long-lived API token (the password is never stored). */
+    @PluginMethod
+    public void noyauLogin(PluginCall call) {
+        String base = call.getString("url", "");
+        try {
+            JSONObject body = new JSONObject();
+            body.put("name", call.getString("name", ""));
+            body.put("password", call.getString("password", ""));
+            body.put("app", "GlowPilot Android");
+            java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(base.replaceAll("/$", "") + "/api/auth/token").openConnection();
+            c.setConnectTimeout(6000);
+            c.setReadTimeout(10000);
+            c.setRequestMethod("POST");
+            c.setDoOutput(true);
+            c.setRequestProperty("Content-Type", "application/json");
+            try (java.io.OutputStream os = c.getOutputStream()) { os.write(body.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
+            int code = c.getResponseCode();
+            java.io.InputStream in = code < 400 ? c.getInputStream() : c.getErrorStream();
+            StringBuilder sb = new StringBuilder();
+            if (in != null) try (java.io.BufferedReader br = new java.io.BufferedReader(new java.io.InputStreamReader(in, java.nio.charset.StandardCharsets.UTF_8))) { String l; while ((l = br.readLine()) != null) sb.append(l); }
+            if (code == 201 || code == 200) {
+                JSONObject r = new JSONObject(sb.toString());
+                JSObject out = new JSObject();
+                out.put("token", r.optString("token"));
+                out.put("user", r.optString("user", call.getString("name", "")));
+                call.resolve(out);
+                return;
+            }
+            String msg = code == 401 ? "Wrong name or password"
+                : code == 403 ? "Your Noyau password is temporary: change it in Noyau first"
+                : code == 429 ? "Too many attempts: wait a few minutes"
+                : code == 422 ? "Fill in the name and password"
+                : code >= 500 ? "Noyau server error: it may need its database update (alembic upgrade head)"
+                : code == 404 ? "This Noyau does not support sign-in yet (update Noyau)"
+                : "Noyau answered " + code;
+            call.reject(msg);
+        } catch (Exception e) {
+            call.reject("Noyau not reachable: " + e.getMessage());
+        }
+    }
+
     /** Noyau Musique library (file tracks only), fetched natively: no CORS, works with the HTTPS address. */
     @PluginMethod
     public void noyauTracks(PluginCall call) {
@@ -150,7 +191,7 @@ public class GlowAlarmPlugin extends Plugin {
             c.setReadTimeout(10000);
             c.setRequestProperty("Authorization", "Bearer " + token);
             int code = c.getResponseCode();
-            if (code != 200) { call.reject("Noyau answered " + code + (code == 401 ? " (token refused)" : "")); return; }
+            if (code != 200) { call.reject("Noyau answered " + code + (code == 401 ? " (sign-in expired or revoked: sign in again in Settings → Noyau)" : "")); return; }
             StringBuilder sb = new StringBuilder();
             try (java.io.BufferedReader br = new java.io.BufferedReader(new java.io.InputStreamReader(c.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) { String l; while ((l = br.readLine()) != null) sb.append(l); }
             org.json.JSONArray all = new org.json.JSONArray(sb.toString()), files = new org.json.JSONArray();

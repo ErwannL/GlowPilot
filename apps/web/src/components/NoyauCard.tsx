@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { store, useStore } from '../store';
-import { phoneAlarmsAvailable } from '../phoneAlarm';
+import { GlowAlarm, phoneAlarmsAvailable } from '../phoneAlarm';
 import { Badge, Button, Card, Field, inputCls, Swatch, Toggle } from './ui';
 
 /**
@@ -12,28 +12,56 @@ export function NoyauCard() {
   const s = useStore((x) => x);
   const n = s.hubNoyau;
   const [url, setUrl] = useState(n?.url ?? s.settings.noyauUrl);
-  const [token, setToken] = useState('');
+  const [name, setName] = useState(s.settings.noyauUser ?? '');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [pick, setPick] = useState('#8b5cf6');
   const phone = phoneAlarmsAvailable();
   if (!s.hub && !phone) return null;
   const colors = n?.colors ?? ['#8b5cf6', '#f97316', '#3b82f6'];
+  const linked = !!(n?.hasToken || s.settings.noyauToken);
+
+  /** Name + password → a Noyau API token. Only the token is kept, never the password. */
+  const signIn = async () => {
+    const clean = url.trim().replace(/\/$/, '');
+    setBusy(true);
+    setMsg(null);
+    try {
+      let r: { token: string; user: string };
+      if (phone) r = await GlowAlarm.noyauLogin({ url: clean, name: name.trim(), password });
+      else {
+        const res = await fetch(`${clean}/api/auth/token`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: name.trim(), password, app: 'GlowPilot' }) });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(j?.error?.message ?? `Noyau answered ${res.status}`);
+        r = { token: j.token, user: j.user ?? name.trim() };
+      }
+      if (s.hub) store.saveHubNoyau({ url: clean, token: r.token });
+      store.updateSettings({ noyauUrl: clean, noyauToken: r.token, noyauUser: r.user });
+      setMsg({ ok: true, text: `Signed in as ${r.user}.` });
+    } catch (e) {
+      setMsg({ ok: false, text: (e as Error).message });
+    } finally {
+      setPassword('');
+      setBusy(false);
+    }
+  };
 
   return (
-    <Card title="Noyau" action={n?.playing ? <Badge tone="green">♪ Music playing</Badge> : n?.hasToken ? <Badge tone="blue">Linked</Badge> : <Badge>Not linked</Badge>}>
+    <Card title="Noyau" action={n?.playing ? <Badge tone="green">♪ Music playing</Badge> : linked ? <Badge tone="blue">Linked</Badge> : <Badge>Not linked</Badge>}>
       <div className="space-y-4 text-sm text-white/60">
-        <p>Connect GlowPilot to your Noyau server: the lights pulse in rhythm with Noyau Musique, and your alarm can ring with a song from your Noyau library. Create the token in Noyau (API tokens) and paste it here.</p>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <p>Sign in with your Noyau account: the lights pulse in rhythm with Noyau Musique, and your alarm can ring with a song from your library. Your password is only used once to get a music-only key; GlowPilot never keeps it (revoke the key in Noyau › Settings › Tokens).</p>
+        {linked && s.settings.noyauUser && <p className="text-white/80">Signed in as <b>{s.settings.noyauUser}</b>.</p>}
+        <div className="grid gap-3 sm:grid-cols-3">
           <Field label="Noyau address"><input className={inputCls} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://noyau.example.ts.net" /></Field>
-          <Field label="Noyau API token" hint={n?.hasToken || s.settings.noyauToken ? 'Saved. Leave empty to keep it.' : undefined}>
-            <input className={inputCls} type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="••••••••" />
-          </Field>
+          <Field label="Name"><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} autoComplete="username" /></Field>
+          <Field label="Password"><input className={inputCls} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" onKeyDown={(e) => e.key === 'Enter' && void signIn()} /></Field>
         </div>
-        <Button variant="primary" onClick={() => {
-          const clean = url.trim().replace(/\/$/, '');
-          if (s.hub) store.saveHubNoyau({ url: clean, ...(token ? { token: token.trim() } : {}) });
-          store.updateSettings({ noyauUrl: clean, ...(token ? { noyauToken: token.trim() } : {}) });
-          setToken('');
-        }}>Save</Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="primary" disabled={busy || !name.trim() || !password} onClick={() => void signIn()}>{busy ? 'Signing in…' : linked ? 'Sign in again' : 'Sign in'}</Button>
+          {linked && <Button variant="soft" onClick={() => { if (s.hub) store.saveHubNoyau({ token: '' }); store.updateSettings({ noyauToken: '', noyauUser: '' }); setMsg(null); }}>Sign out</Button>}
+        </div>
+        {msg && <p className={msg.ok ? 'text-emerald-300' : 'text-orange-200'}>{msg.text}</p>}
 
         {s.hub && (
           <div className="space-y-3 rounded-2xl bg-white/5 p-3">

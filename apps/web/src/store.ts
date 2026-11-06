@@ -107,6 +107,8 @@ export interface Settings {
   /** Noyau (for the phone's "Choose from Noyau" alarm music). */
   noyauUrl: string;
   noyauToken: string;
+  /** Noyau account the token belongs to (shown as "Signed in as"). */
+  noyauUser?: string;
   automationEnabled: boolean;
   onboarded: boolean;
 }
