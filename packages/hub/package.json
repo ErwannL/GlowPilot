@@ -7,7 +7,8 @@
   "scripts": {
     "build": "esbuild src/main.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/hub.cjs --external:node-ble --external:ws",
     "typecheck": "tsc -p .",
-    "test": "esbuild test/noyau.test.ts --bundle --platform=node --format=cjs --outfile=dist/test.cjs --log-level=warning && node --test dist/test.cjs"
+    "test": "esbuild test/noyau.test.ts --bundle --sourcemap --platform=node --format=cjs --outfile=dist/test.cjs --log-level=warning && node --enable-source-maps --test dist/test.cjs",
+    "coverage": "esbuild test/noyau.test.ts --bundle --sourcemap --platform=node --format=cjs --outfile=dist/test.cjs --log-level=warning && c8 --reporter=text --reporter=json-summary --exclude-after-remap node --enable-source-maps --test dist/test.cjs"
   },
   "dependencies": {
     "@glowpilot/core": "*",

@@ -7,11 +7,17 @@
     "apps/*"
   ],
   "scripts": {
-    "test": "npm run test -w @glowpilot/core && npm run test -w @glowpilot/desktop && npm run test -w @glowpilot/hub",
+    "test": "npm run test -w @glowpilot/core && npm run test -w @glowpilot/desktop && npm run test -w @glowpilot/hub && npm run test -w @glowpilot/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "dev": "npm run dev -w @glowpilot/web",
     "build": "npm run build -w @glowpilot/web",
     "desktop": "npm run build && npm run start -w @glowpilot/desktop",
-    "hw:scan": "node apps/desktop/scripts/hint.cjs"
+    "hw:scan": "node apps/desktop/scripts/hint.cjs",
+    "coverage": "npm run coverage -w @glowpilot/core && npm run coverage -w @glowpilot/desktop && npm run coverage -w @glowpilot/hub && npm run coverage -w @glowpilot/web",
+    "test:visual": "npm run test:visual -w @glowpilot/web",
+    "test:android": "cd apps/android && gradlew testDebugUnitTest"
+  },
+  "devDependencies": {
+    "c8": "^10.1.3"
   }
 }

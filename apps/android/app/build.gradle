@@ -1,6 +1,7 @@
 apply plugin: 'com.android.application'
 
 android {
+    testOptions { unitTests.includeAndroidResources = true }
     namespace "app.glowpilot"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
@@ -53,6 +54,8 @@ dependencies {
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
+    // JVM tests of the alarm logic (AlarmStore) with real org.json and a shadowed AlarmManager.
+    testImplementation "org.robolectric:robolectric:4.14.1"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')

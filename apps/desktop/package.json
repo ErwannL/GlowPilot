@@ -7,11 +7,12 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test test/server.test.cjs",
-    "dist": "electron-builder --win --publish never"
+    "dist": "electron-builder --win --publish never",
+    "coverage": "c8 --reporter=text --reporter=json-summary --include=src/server.cjs --include=src/updater.cjs node --test test/server.test.cjs"
   },
   "dependencies": {
-    "ws": "^8.18.0",
-    "electron-updater": "^6.3.9"
+    "electron-updater": "^6.3.9",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "electron": "^33.2.1",
