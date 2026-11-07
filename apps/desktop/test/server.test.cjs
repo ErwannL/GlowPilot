@@ -186,3 +186,13 @@ test('static files without a build say so', async () => {
   assert.strictEqual(r.status, 404);
   api.stop();
 });
+
+test('Bluetooth radio state is read from PowerShell output', () => {
+  const { parseState } = require('../src/radio.cjs');
+  assert.equal(parseState('On\r\n'), 'on');
+  assert.equal(parseState('Off'), 'off');
+  assert.equal(parseState('Disabled'), 'off');
+  assert.equal(parseState('none'), 'none');
+  assert.equal(parseState(''), 'unknown');
+  assert.equal(parseState('warning line\nOff\n'), 'off');
+});

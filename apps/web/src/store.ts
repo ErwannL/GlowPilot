@@ -20,6 +20,9 @@ export interface DesktopBridge {
   autoSelect?(id: string): void;
   /** Ask main to call __glowpilotAutoconnect again with a fresh user gesture. */
   requestAutoconnect?(): void;
+  /** Windows Bluetooth radio: off means no scan can ever find anything. */
+  bluetoothRadio?(): Promise<'on' | 'off' | 'none' | 'unknown'>;
+  bluetoothRadioOn?(): Promise<'on' | 'off' | 'none' | 'unknown'>;
   legacyTrustedId?(): Promise<string | null>;
   setTrustedDevice(id: string | null): void;
   publishState(s: RemoteState): void;
@@ -162,6 +165,8 @@ export interface UIState {
   lostTo: string | null;
   /** "Take control" in progress, or it ended without finding the light. */
   taking: null | 'searching' | 'notFound';
+  /** PC: the Windows Bluetooth radio is switched off (or there is no adapter). */
+  bluetoothOff: null | 'off' | 'none';
 }
 
 // --- persistence ---------------------------------------------------------------
@@ -421,6 +426,7 @@ class Store {
       claimAt: 0,
       lostTo: null,
       taking: null,
+      bluetoothOff: null,
       log: [],
       lastAckAt: 0,
       error: null,
@@ -675,14 +681,40 @@ class Store {
     this.sendRemote({ t: 'addLight', id, name } as unknown as ClientMessage);
   }
 
+  /**
+   * PC: is the Bluetooth radio on? When it is off Chromium still says Bluetooth is available but finds
+   * nothing, and every button looked dead. Returns false (and shows why) when no search can work.
+   */
+  async checkBluetooth(): Promise<boolean> {
+    if (!desktop?.bluetoothRadio || this.state.mode !== 'local') return true;
+    const s = await desktop.bluetoothRadio().catch(() => 'unknown' as const);
+    const off = s === 'off' || s === 'none' ? s : null;
+    if (off !== this.state.bluetoothOff) this.set({ bluetoothOff: off });
+    if (off) phoneLog(`Bluetooth radio ${off}`);
+    return !off;
+  }
+
+  /** PC: switch the Windows Bluetooth radio on (asked by the user), then look for the lights again. */
+  async turnBluetoothOn() {
+    const s = await desktop?.bluetoothRadioOn?.().catch(() => 'unknown' as const);
+    if (s === 'on') {
+      this.set({ bluetoothOff: null, taking: null });
+      // The adapter needs a moment before it can scan.
+      setTimeout(() => this.lights.forEach((l) => l.status !== 'connected' && this.connectLight(l.device.id)), 2000);
+    } else await this.checkBluetooth();
+  }
+
   async addLight() {
     if (this.state.mode === 'remote') return this.hubScanLights();
+    if (!(await this.checkBluetooth())) return;
     try {
       this.set({ error: null });
       const transport = this.makeTransport(this.state.mode);
       const probe = new DeviceController(transport, elkDriver);
       this.lastChooserId = null;
-      const picked = await probe.pick();
+      // PC: show the list right away ("Scanning…"), not only once a first device is found.
+      if (desktop) this.set({ btChooser: [] });
+      const picked = await probe.pick().finally(() => { if (desktop && this.state.btChooser) this.set({ btChooser: null }); });
       const existing = this.lights.find((l) => l.device.id === picked.id);
       if (existing) {
         // Same controller picked again: give its light the fresh transport (browser permission renewed).
@@ -720,6 +752,7 @@ class Store {
 
   connectLight(id: string) {
     if (this.state.mode === 'remote') return this.sendRemote({ t: 'connectLight', id } as unknown as ClientMessage);
+    if (desktop?.bluetoothRadio) void this.checkBluetooth();
     const light = this.lights.find((l) => l.device.id === id);
     if (!light) return;
     void light.controller.connect(light.device).catch((e: Error) => {
@@ -1076,6 +1109,7 @@ class Store {
    * asked to let go, then this one connects. Nothing is taken automatically any more.
    */
   async takeControl() {
+    if (desktop?.bluetoothRadio && this.state.mode === 'local' && !(await this.checkBluetooth())) return;
     const now = Date.now();
     lastYieldAsk = now;
     this.set({ claimAt: now, lostTo: null, taking: 'searching', owner: desktop ? 'desktop' : this.state.owner });

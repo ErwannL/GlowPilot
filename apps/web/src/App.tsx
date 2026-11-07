@@ -119,7 +119,7 @@ export function App() {
       <Modal open={!!chooser} onClose={() => store.chooseBluetooth('')} title="Choose your controller">
         <p className="mb-4 text-sm text-white/55">GlowPilot only connects to the controller you pick. Close Lotus Lantern on your phone first; the controller accepts one connection at a time.</p>
         <div className="space-y-2">
-          {chooser?.length === 0 && <div className="py-6 text-center text-sm text-white/50 gp-pulse">Scanning for nearby controllers…</div>}
+          {chooser?.length === 0 && <div className="py-6 text-center text-sm text-white/50 gp-pulse">Scanning for nearby controllers…<span className="mt-2 block text-xs">Nothing after a few seconds? Check the light is powered and not connected to your phone (or Lotus Lantern).</span></div>}
           {chooser?.map((d) => (
             <button key={d.id} onClick={() => store.chooseBluetooth(d.id)} className="flex w-full items-center justify-between rounded-2xl bg-white/5 px-4 py-3 text-left hover:bg-white/10">
               <span><span className="font-medium">{d.name.trim() || 'Unnamed device'}</span><span className="block text-xs text-white/40">{d.id}</span></span>
@@ -142,6 +142,16 @@ export function TakeControl() {
   const lostTo = useStore((x) => x.lostTo);
   const taking = useStore((x) => x.taking);
   const n = useStore((x) => x.lights.length);
+  const btOff = useStore((x) => x.bluetoothOff);
+  if (mode === 'local' && btOff) return (
+    <div data-testid="bluetooth-off" className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-orange-400/40 bg-orange-500/10 px-4 py-3">
+      <div className="text-sm text-white/80">
+        {btOff === 'none' ? <>No Bluetooth adapter found on this PC.</> : <><b className="text-white">Bluetooth is off on this PC.</b> GlowPilot can't see any light until it is on.</>}
+        <span className="block text-xs text-white/45">{btOff === 'none' ? 'Plug in a Bluetooth adapter, or control the lights from your phone.' : 'Windows: Settings → Bluetooth & devices, or the button here.'}</span>
+      </div>
+      {btOff === 'off' && <button onClick={() => void store.turnBluetoothOn()} className="brand-gradient rounded-xl px-4 py-2 text-sm font-semibold text-white">Turn Bluetooth on</button>}
+    </div>
+  );
   if (mode !== 'local' || !n || status === 'connected') return null;
   return (
     <div data-testid="take-control" className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-violet-400/30 bg-violet-500/10 px-4 py-3">

@@ -10,6 +10,7 @@ const { ActivityWatcher } = require('./activity.cjs');
 const { setupAutoUpdate, consumeRelaunchHidden } = require('./updater.cjs');
 const { scanSteamGames } = require('./steam.cjs');
 const { syncWakeTasks, keepAwake } = require('./power.cjs');
+const { bluetoothRadio, bluetoothRadioOn } = require('./radio.cjs');
 
 const API_PORT = Number(process.env.GLOWPILOT_PORT || 47821);
 const WEB_DIST = app.isPackaged ? path.join(process.resourcesPath, 'web') : path.resolve(__dirname, '../../web/dist');
@@ -127,6 +128,8 @@ ipcMain.on('auto-select', (_e, id) => {
   }, 20_500);
 });
 ipcMain.on('autoconnect-again', () => autoConnect());
+ipcMain.handle('bt-radio', () => bluetoothRadio());
+ipcMain.handle('bt-radio-on', () => bluetoothRadioOn());
 ipcMain.on('wake-tasks', (_e, wakes) => syncWakeTasks(Array.isArray(wakes) ? wakes.slice(0, 50) : [], (m) => console.log(m)));
 ipcMain.on('keep-awake', (_e, on) => keepAwake(!!on));
 ipcMain.on('tray-paused', (_e, p) => { trayPaused = !!p; buildTrayMenu(); });
