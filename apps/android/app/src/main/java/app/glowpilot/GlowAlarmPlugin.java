@@ -36,6 +36,73 @@ import org.json.JSONObject;
 )
 public class GlowAlarmPlugin extends Plugin {
 
+    // --- "Take control" from the PC -------------------------------------------------------
+    // The light accepts one connection. A phone has no other way to hear that the PC wants it, so it
+    // listens on the home network (port 47822) for as long as the app process lives, even screen off.
+
+    static final int PHONE_PORT = 47822;
+    private static volatile boolean holding = false;
+    private java.net.ServerSocket server;
+
+    @Override
+    public void load() {
+        Thread t = new Thread(this::serve, "glowpilot-yield");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        try { if (server != null) server.close(); } catch (Exception ignored) { }
+    }
+
+    /** The web app tells whether it holds the light (reported to the PC). */
+    @PluginMethod
+    public void setHolding(PluginCall call) {
+        holding = Boolean.TRUE.equals(call.getBoolean("holding", false));
+        call.resolve();
+    }
+
+    private void serve() {
+        try {
+            server = new java.net.ServerSocket(PHONE_PORT);
+            while (!server.isClosed()) {
+                try (java.net.Socket c = server.accept()) {
+                    c.setSoTimeout(3000);
+                    String peer = c.getInetAddress().getHostAddress();
+                    if (!isLocal(c.getInetAddress())) continue;
+                    java.io.BufferedReader in = new java.io.BufferedReader(new java.io.InputStreamReader(c.getInputStream(), java.nio.charset.StandardCharsets.UTF_8));
+                    String first = in.readLine();
+                    if (first == null) continue;
+                    String body;
+                    if (first.startsWith("POST /yield")) {
+                        AlarmStore.log(getContext(), "PC " + peer + " asked for the lights (Take control): letting go");
+                        JSObject ev = new JSObject();
+                        ev.put("from", peer);
+                        notifyListeners("yield", ev, true);
+                        body = "{\"ok\":true}";
+                    } else {
+                        body = "{\"app\":\"GlowPilot\",\"role\":\"phone\",\"lightsConnected\":" + holding + "}";
+                    }
+                    byte[] b = body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                    java.io.OutputStream os = c.getOutputStream();
+                    os.write(("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: " + b.length + "\r\nConnection: close\r\n\r\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    os.write(b);
+                    os.flush();
+                } catch (Exception ignored) { }
+            }
+        } catch (Exception e) {
+            AlarmStore.log(getContext(), "yield listener not started: " + e.getMessage());
+        }
+    }
+
+    /** Home network only (same rule as GlowPilot Desktop's API), plus Tailscale's 100.64/10. */
+    private static boolean isLocal(java.net.InetAddress a) {
+        byte[] b = a.getAddress();
+        return a.isLoopbackAddress() || a.isSiteLocalAddress() || a.isLinkLocalAddress()
+            || (b.length == 4 && (b[0] & 0xff) == 100 && (b[1] & 0xc0) == 64);
+    }
+
     /** config: { alarms:[{id,time,days,minutes,color,onceAt?}], addresses:[], names:[], desktopUrl, token, syncPhoneAlarm, minutesBefore, color } */
     @PluginMethod
     public void configure(PluginCall call) {

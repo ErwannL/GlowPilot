@@ -15,6 +15,8 @@ interface GlowAlarmPlugin {
   noyauTracks(o: { url: string; token: string }): Promise<{ tracks: { id: number; title: string; artist?: string; duration_seconds?: number }[] }>;
   noyauLogin(o: { url: string; name: string; password: string }): Promise<{ token: string; user: string }>;
   installUpdate(o: { url: string }): Promise<void>;
+  setHolding(o: { holding: boolean }): Promise<void>;
+  addListener(event: 'yield', cb: (e: { from: string }) => void): Promise<{ remove: () => Promise<void> }>;
   readLog(): Promise<{ text: string }>;
   appendLog(o: { line: string }): Promise<void>;
   downloadNoyauTrack(o: { url: string; token: string; id: number; name: string }): Promise<{ uri: string; name: string }>;

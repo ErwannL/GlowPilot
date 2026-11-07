@@ -8,8 +8,8 @@ import {
 } from '@glowpilot/core';
 import { WebBluetoothTransport } from './transports/webBluetooth';
 import { CapacitorBleTransport } from './transports/capacitor';
-import { askOthersToYield, findPeers, knownPeers } from './discovery';
-import { alarmsForPhone, phoneAlarmsAvailable, phoneLog, syncPhoneAlarms } from './phoneAlarm';
+import { askOthersToYield, askPhonesToYield, findPeers, knownPeers } from './discovery';
+import { alarmsForPhone, GlowAlarm, phoneAlarmsAvailable, phoneLog, syncPhoneAlarms } from './phoneAlarm';
 
 /** Bridge exposed by GlowPilot Desktop's preload script. Absent in a normal browser. */
 export interface DesktopBridge {
@@ -1087,6 +1087,10 @@ class Store {
       this.lights.forEach((l) => l.status !== 'connected' && this.connectLight(l.device.id));
       void this.tellPeer({ t: 'requestOwnership' });
       void askOthersToYield();
+      void askPhonesToYield().then((n) => {
+        // The phone has let go: the light advertises again within a couple of seconds, search again.
+        if (n) setTimeout(() => this.lights.forEach((l) => l.status !== 'connected' && this.connectLight(l.device.id)), 2500);
+      });
     } else {
       await this.tellPeer({ t: 'requestOwnership' });
       await askOthersToYield();
@@ -1103,6 +1107,7 @@ class Store {
   }
 
   private heldSince = 0;
+  private reportedHolding = false;
   private lostAt = 0;
   /**
    * A phone has no server the PC could call: while it holds the light it checks the PCs/hubs it knows
@@ -1110,6 +1115,21 @@ class Store {
    */
   private watchClaims() {
     if (desktop) return;
+    if (phoneAlarmsAvailable()) {
+      // Instant path: the PC calls the phone directly (native listener, works with the screen off).
+      void GlowAlarm.addListener('yield', ({ from }) => {
+        if (!this.lights.some((l) => l.status === 'connected' || l.status === 'connecting' || l.status === 'reconnecting')) return;
+        phoneLog(`your PC (${from}) took control: letting go of the lights`);
+        this.heldSince = 0;
+        this.lostAt = Date.now();
+        void this.disconnect();
+        this.set({ lostTo: 'your PC' });
+      });
+      this.subscribe(() => {
+        const held = this.lights.some((l) => l.status === 'connected');
+        if (held !== this.reportedHolding) { this.reportedHolding = held; void GlowAlarm.setHolding({ holding: held }).catch(() => {}); }
+      });
+    }
     setInterval(async () => {
       const held = this.state.mode === 'local' && this.lights.some((l) => l.status === 'connected');
       if (!held) {
@@ -1142,7 +1162,7 @@ class Store {
           }
         } catch { /* not reachable now */ }
       }
-    }, 10_000);
+    }, 5_000);
   }
 
   chooseBluetooth(id: string) {

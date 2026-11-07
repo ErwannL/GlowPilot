@@ -59,6 +59,33 @@ export const subnetOf = (url: string) => /^wss?:\/\/(\d+\.\d+\.\d+)\.\d+/.exec(u
  * Direct Bluetooth: the light accepts one connection and goes invisible while it has one.
  * Ask every GlowPilot (hub, PC) that holds it to let go. Returns how many were asked.
  */
+/** Port where GlowPilot for Android listens for "Take control" (GlowAlarmPlugin.PHONE_PORT). */
+export const PHONE_PORT = 47822;
+
+/**
+ * PC: ask the phones holding the light to let go. Phones seen before first (instant), then a quick
+ * sweep of the home network for any other one. Returns how many let go.
+ */
+export async function askPhonesToYield(): Promise<number> {
+  const yieldAt = (ip: string) => fetch(`http://${ip}:${PHONE_PORT}/yield`, { method: 'POST', signal: AbortSignal.timeout(1500) }).then((r) => r.ok, () => false);
+  let known: string[] = [];
+  try { known = JSON.parse(localStorage.getItem('gp.phones') ?? '[]'); } catch { /* ignore */ }
+  if ((await Promise.all(known.map(yieldAt))).some(Boolean)) return 1;
+  const isPhone = async (ip: string) => ((await fetch(`http://${ip}:${PHONE_PORT}/info`, { signal: AbortSignal.timeout(1000) }).then((r) => r.json(), () => null)) as { role?: string } | null)?.role === 'phone';
+  const found: string[] = [];
+  for (const net of ['192.168.1', '192.168.0']) {
+    const ips = Array.from({ length: 254 }, (_, i) => `${net}.${i + 1}`);
+    for (let i = 0; i < ips.length; i += 64) {
+      const batch = ips.slice(i, i + 64);
+      const res = await Promise.all(batch.map(isPhone));
+      batch.forEach((ip, j) => res[j] && found.push(ip));
+    }
+    if (found.length) break;
+  }
+  if (found.length) try { localStorage.setItem('gp.phones', JSON.stringify(found)); } catch { /* ignore */ }
+  return (await Promise.all(found.map(yieldAt))).filter(Boolean).length;
+}
+
 export async function askOthersToYield(): Promise<number> {
   const ask = (url: string) => fetch(`${url.replace(/^ws/, 'http')}/api/yield`, { method: 'POST', signal: AbortSignal.timeout(3000) }).then(() => true, () => false);
   // The ones already known answer in a second; scanning the whole network takes ~10 s.
