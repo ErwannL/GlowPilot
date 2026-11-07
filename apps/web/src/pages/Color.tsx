@@ -69,7 +69,7 @@ function CalibrationCard({ cal }: { cal: Calibration }) {
     if (active != null) store.exec({ type: 'color', color: CALIBRATION_SWATCHES[active].rgb });
   };
   return (
-    <Card title="Calibration for this device" action={<div className="flex gap-2">
+    <Card title="Calibration for this device" action={<div className="flex flex-wrap gap-2">
       <Button onClick={() => store.setCalibration({ ...DEFAULT_CALIBRATION })}>Recommended</Button>
       <Button onClick={() => store.setCalibration({ ...IDENTITY_CALIBRATION })}>Raw</Button>
     </div>}>

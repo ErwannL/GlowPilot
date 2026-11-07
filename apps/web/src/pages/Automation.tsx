@@ -52,7 +52,7 @@ export function Automation() {
               <div className="min-w-0 flex-1">
                 <div className="font-semibold">{r.name || r.process}</div>
                 <div className="text-sm text-white/50">
-                  IF <code className="text-violet-200">{r.process.split('|').join(' or ')}</code> {r.trigger === 'foreground' ? 'is focused' : 'is running'} THEN {scene?.icon} {scene?.name ?? 'missing scene'}
+                  IF <code className="break-all text-violet-200">{r.process.split('|').join(' or ')}</code> {r.trigger === 'foreground' ? 'is focused' : 'is running'} THEN {scene?.icon} {scene?.name ?? 'missing scene'}
                   {r.targetGroupId ? ` on ${s.groups.find((g) => g.id === r.targetGroupId)?.name ?? 'missing group'}` : ''}
                 </div>
                 <div className="mt-1 flex flex-wrap gap-1.5">

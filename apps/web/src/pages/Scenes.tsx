@@ -52,7 +52,7 @@ export function Scenes() {
                 </div>
                 {active === s.id && mixStep && s.steps?.length ? <div className="mt-1 text-[11px] text-violet-200">▶ now: {stepLabel(snap, scenes)}</div> : null}
               </button>
-              <div className="relative mt-3 flex gap-1 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
+              <div className="relative mt-3 flex flex-wrap gap-1 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
                 <button className="rounded-lg bg-white/10 px-2 py-1 text-[11px]" onClick={() => setEditing(s)}>Edit</button>
                 <button className="rounded-lg bg-white/10 px-2 py-1 text-[11px]" onClick={() => store.saveScenes([...scenes, duplicateScene(s)])}>Duplicate</button>
                 {s.builtin ? (

@@ -9,7 +9,7 @@ export function Card({ children, className, title, action }: { children: ReactNo
   return (
     <section className={cx('glass rounded-3xl p-5 gp-in', className)}>
       {(title || action) && (
-        <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           {title && <h3 className="text-sm font-semibold tracking-wide text-white/70">{title}</h3>}
           {action}
         </div>
@@ -75,7 +75,7 @@ const STATUS: Record<ConnectionStatus, { label: string; dot: string }> = {
 export function StatusPill({ status }: { status: ConnectionStatus }) {
   const s = STATUS[status];
   return (
-    <span className="inline-flex items-center gap-2 rounded-full bg-white/5 px-3 py-1 text-xs text-white/75 border border-white/10">
+    <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-white/5 px-3 py-1 text-xs text-white/75 border border-white/10">
       <span className={cx('h-2 w-2 rounded-full', s.dot)} /> {s.label}
     </span>
   );
@@ -165,7 +165,7 @@ export const inputCls = 'w-full rounded-xl border border-white/10 bg-ink-950/60 
 
 export function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'neutral' | 'purple' | 'orange' | 'blue' | 'green' }) {
   const t = { neutral: 'bg-white/8 text-white/70', purple: 'bg-violet-500/15 text-violet-200', orange: 'bg-orange-500/15 text-orange-200', blue: 'bg-blue-500/15 text-blue-200', green: 'bg-emerald-500/15 text-emerald-200' }[tone];
-  return <span className={cx('inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium', t)}>{children}</span>;
+  return <span className={cx('inline-flex max-w-full items-center break-words rounded-full px-2.5 py-0.5 text-[11px] font-medium', t)}>{children}</span>;
 }
 
 export function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: ReactNode }) {

@@ -218,7 +218,7 @@ function LightCard({ light, remote, groups }: { light: LightView; remote: boolea
   const swatch = c && (!light.sim || light.sim.on) ? rgbToHex({ r: c.r, g: c.g, b: c.b }) : '#15121f';
   return (
     <div className="glass gp-in rounded-3xl p-4">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <div className="h-12 w-12 shrink-0 rounded-2xl border border-white/10 transition-colors" style={{ background: swatch, boxShadow: swatch !== '#15121f' ? `0 0 22px ${swatch}77` : 'none' }} />
         <div className="min-w-0 flex-1">
           {editing ? (

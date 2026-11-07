@@ -44,3 +44,9 @@ input[type="range"].gp-range::-moz-range-thumb { width: 18px; height: 18px; bord
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #2f2850; border-radius: 8px; }
+
+/* A grid cell is as wide as its widest unbreakable content by default: one long badge or address
+   made whole pages scroll sideways on a 360 px phone. Let every cell shrink to its column. */
+.grid > * { min-width: 0; }
+/* With a big system font (Android accessibility) a long word must wrap instead of widening the page. */
+body { overflow-wrap: break-word; }

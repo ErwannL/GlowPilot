@@ -190,7 +190,9 @@ const save = (k: string, v: unknown) => {
 /** 0.0.1 shipped a default calibration (gamma 1.6) that turned purple into blue; replace it if untouched. */
 function migrateDevice<T extends SavedDevice>(d: T): T {
   const c = d.calibration;
-  if (c && c.gamma === 1.6 && c.gain.g === 0.85 && c.gain.b === 0.9 && c.warmGreenCut === 0.35)
+  // A device saved without calibration (hand-edited, very old build) crashed the Color page.
+  if (!c) return { ...d, calibration: { ...DEFAULT_CALIBRATION, gain: { ...DEFAULT_CALIBRATION.gain } } };
+  if (c.gamma === 1.6 && c.gain.g === 0.85 && c.gain.b === 0.9 && c.warmGreenCut === 0.35)
     return { ...d, calibration: { ...DEFAULT_CALIBRATION, gain: { ...DEFAULT_CALIBRATION.gain }, order: c.order } };
   return d;
 }

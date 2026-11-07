@@ -81,11 +81,11 @@ export function App() {
       </aside>
 
       <header className="sticky top-0 z-20 flex items-center justify-between border-b border-white/5 bg-ink-900/70 px-4 py-3 backdrop-blur-xl lg:hidden" style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}>
-        <div className="flex items-center gap-2.5">
-          <img src="./icon.svg" alt="" className="h-8 w-8" />
-          <span className="font-semibold">GlowPilot</span>
+        <div className="flex min-w-0 items-center gap-2.5">
+          <img src="./icon.svg" alt="" className="h-8 w-8 shrink-0" />
+          <span className="truncate font-semibold">GlowPilot</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <StatusPill status={status} />
           <details className="relative">
             <summary className="list-none cursor-pointer rounded-xl bg-white/5 px-3 py-1.5 text-sm">☰</summary>
@@ -109,9 +109,9 @@ export function App() {
 
       <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-white/5 bg-ink-950/85 backdrop-blur-xl lg:hidden" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
         {mobileNav.map((p) => (
-          <a key={p.id} href={'#' + p.id} className={cx('flex flex-col items-center gap-0.5 py-2.5 text-[11px]', route === p.id ? 'text-white' : 'text-white/45')}>
+          <a key={p.id} href={'#' + p.id} className={cx('flex min-w-0 flex-col items-center gap-0.5 px-0.5 py-2.5 text-[11px]', route === p.id ? 'text-white' : 'text-white/45')}>
             <span className={cx('text-lg leading-none', route === p.id && 'brand-text')}>{p.icon}</span>
-            {p.label}
+            <span className="w-full truncate text-center">{p.label}</span>
           </a>
         ))}
       </nav>

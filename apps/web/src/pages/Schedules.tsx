@@ -18,7 +18,7 @@ export function Schedules() {
       <Card className="border-blue-400/20">
         <div className="flex items-start gap-3">
           <span className="text-2xl">ⓘ</span>
-          <div className="text-sm text-white/60">
+          <div className="min-w-0 flex-1 text-sm text-white/60">
             <b className="text-white/85">Schedules run in GlowPilot, not in the controller.</b> They currently run on <b>{runner}</b>, which must stay on with GlowPilot running and in Bluetooth range.
             Turning the lights off (or any change) stops a ringing alarm.
             {desktop && <> On this PC, GlowPilot <b>wakes Windows from sleep</b> 3 minutes before alarms and sunrises, and keeps it awake while they run. This needs the PC plugged in (on battery Windows ignores wake timers) and does not work if it is shut down.</>}
