@@ -131,3 +131,58 @@ test('HTTP pairing, state and messages (for Noyau)', async () => {
   assert.strictEqual((await fetch(`${base}/api/message`, { method: 'POST', headers: auth, body: JSON.stringify({ t: 'auth' }) })).status, 400);
   api.stop();
 });
+
+test('info claimAgoMs, yield, static files, alarm validation, port in use', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gp-'));
+  fs.writeFileSync(path.join(dir, 'index.html'), '<h1>app</h1>');
+  fs.writeFileSync(path.join(dir, 'a.js'), 'x');
+  const received = [];
+  const port = 48200 + Math.floor(Math.random() * 50);
+  const api = new LocalApiServer({ port, staticDir: dir, storeFile: path.join(dir, 't.json'), onMessage: (c, m) => received.push([c, m]) });
+  api.tokens = { tok: { name: 'Phone' } };
+  api.start();
+  await new Promise((r) => api.server.once('listening', r));
+  const base = `http://127.0.0.1:${port}`;
+  api.broadcastState({ status: 'connected', claimAt: Date.now() - 5000 });
+  const info = await (await fetch(`${base}/api/info`)).json();
+  assert.strictEqual(info.role, 'desktop');
+  assert.strictEqual(info.lightsConnected, true);
+  assert.ok(info.claimAgoMs >= 5000 && info.claimAgoMs < 60000, String(info.claimAgoMs));
+
+  assert.strictEqual((await fetch(`${base}/api/yield`, { method: 'POST' })).status, 200);
+  assert.deepStrictEqual(received.pop(), ['phone 127.0.0.1', { t: 'requestOwnership' }]);
+
+  assert.strictEqual(await (await fetch(`${base}/`)).text(), '<h1>app</h1>');
+  const js = await fetch(`${base}/a.js`);
+  assert.strictEqual(js.headers.get('content-type'), 'text/javascript');
+  assert.strictEqual(await (await fetch(`${base}/deep/link`)).text(), '<h1>app</h1>', 'SPA fallback');
+
+  const auth = { authorization: 'Bearer tok' };
+  const post = (p, body) => fetch(`${base}${p}`, { method: 'POST', headers: auth, body });
+  assert.strictEqual((await post('/api/phone-alarm', JSON.stringify({ at: -1 }))).status, 400);
+  assert.strictEqual((await post('/api/phone-alarm', '{nope')).status, 400);
+  assert.strictEqual((await post('/api/phone-alarm', JSON.stringify({ at: null, minutes: 999, color: 'red', endBrightness: 0, flash: true }))).status, 200);
+  assert.deepStrictEqual(received.pop()[1], { t: 'phoneAlarm', at: null, minutes: 180, color: '#ff8a30', endBrightness: 70, flash: true });
+  assert.strictEqual((await post('/api/alarm-stop')).status, 200);
+  assert.deepStrictEqual(received.pop()[1], { t: 'alarmStop' });
+  assert.strictEqual((await post('/api/message', '{bad')).status, 400);
+  assert.strictEqual((await fetch(`${base}/api/nothing`, { headers: auth })).status, 404);
+  assert.deepStrictEqual(await (await fetch(`${base}/api/status`, { headers: auth })).json(), { connected: true, alarmActive: false });
+
+  const err = console.error; console.error = () => {};
+  api.server.listeners('error').at(-1)(new Error('listen EADDRINUSE'));
+  console.error = err;
+  assert.match(api.error, /EADDRINUSE/);
+  api.stop();
+});
+
+test('static files without a build say so', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gp-'));
+  const port = 48300 + Math.floor(Math.random() * 50);
+  const api = new LocalApiServer({ port, staticDir: dir, storeFile: path.join(dir, 't.json'), onMessage: () => {} });
+  api.start();
+  await new Promise((r) => api.server.once('listening', r));
+  const r = await fetch(`http://127.0.0.1:${port}/`);
+  assert.strictEqual(r.status, 404);
+  api.stop();
+});

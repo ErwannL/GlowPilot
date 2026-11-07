@@ -42,3 +42,50 @@ test('follows Noyau playback over SSE and pulses on the beats', async () => {
   (sse as unknown as http.ServerResponse)?.end();
   server.close();
 });
+
+test('off without settings; pulses at the bpm when beats are missing; reports HTTP errors', async () => {
+  const off = new NoyauMusicSync(() => null, () => {}, () => {}, () => {});
+  off.restart();
+  assert.strictEqual(off.status, 'off');
+
+  let sse: http.ServerResponse | null = null;
+  let fail = true;
+  const server = http.createServer((req, res) => {
+    if (req.url === '/api/music/playback/events') {
+      if (fail) { fail = false; return res.writeHead(500).end(); }
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      sse = res;
+      return;
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, r));
+  const port = (server.address() as { port: number }).port;
+  const frames: number[] = [];
+  const logs: string[] = [];
+  const sync = new NoyauMusicSync(
+    () => ({ url: `http://127.0.0.1:${port}/`, token: 't', musicSync: true, colors: [], target: 'all' }),
+    () => {},
+    (c) => frames.push(c.r + c.g + c.b),
+    (m) => logs.push(String(m)),
+  );
+  sync.restart();
+  for (let i = 0; i < 50 && !sync.status.startsWith('error'); i++) await new Promise((r) => setTimeout(r, 20));
+  assert.strictEqual(sync.status, 'error: HTTP 500');
+  sync.stop();
+  // Second connection succeeds: queue item given as a bare id, no beats → pulses at 120 bpm.
+  sync.restart();
+  await new Promise((r) => setTimeout(r, 50));
+  sync['listen'] = sync['listen']; // keep the reference for TS
+  (sync as unknown as { settings: () => unknown }).settings = () => ({ url: `http://127.0.0.1:${port}`, token: 't', musicSync: true, colors: [], target: 'all' });
+  for (let i = 0; i < 50 && !sse; i++) await new Promise((r) => setTimeout(r, 20));
+  if (sse) {
+    (sse as http.ServerResponse).write(`data: ${JSON.stringify({ queue: [9], queue_index: 0, position_seconds: 0, playing: true, server_time: 0 })}\n\n`);
+    await new Promise((r) => setTimeout(r, 700));
+    assert.ok(logs.some((l) => l.includes('no beats for track 9')), logs.join('|'));
+    assert.ok(Math.max(...frames) > Math.min(...frames), 'pulses');
+    (sse as http.ServerResponse).end();
+  }
+  sync.stop();
+  server.close();
+});
