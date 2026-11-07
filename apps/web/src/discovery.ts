@@ -60,8 +60,15 @@ export const subnetOf = (url: string) => /^wss?:\/\/(\d+\.\d+\.\d+)\.\d+/.exec(u
  * Ask every GlowPilot (hub, PC) that holds it to let go. Returns how many were asked.
  */
 export async function askOthersToYield(): Promise<number> {
+  const ask = (url: string) => fetch(`${url.replace(/^ws/, 'http')}/api/yield`, { method: 'POST', signal: AbortSignal.timeout(3000) }).then(() => true, () => false);
+  // The ones already known answer in a second; scanning the whole network takes ~10 s.
+  const known = knownPeers();
+  if (known.length) {
+    const ok = (await Promise.all(known.map(ask))).filter(Boolean).length;
+    if (ok) return ok;
+  }
   const holders = (await findPeers()).filter((x) => x.lightsConnected);
-  await Promise.all(holders.map((x) => fetch(`${x.url.replace(/^ws/, 'http')}/api/yield`, { method: 'POST', signal: AbortSignal.timeout(3000) }).catch(() => {})));
+  await Promise.all(holders.map((x) => ask(x.url)));
   return holders.length;
 }
 

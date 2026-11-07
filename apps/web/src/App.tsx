@@ -140,15 +140,20 @@ export function TakeControl() {
   const mode = useStore((x) => x.mode);
   const status = useStore((x) => x.status);
   const lostTo = useStore((x) => x.lostTo);
+  const taking = useStore((x) => x.taking);
   const n = useStore((x) => x.lights.length);
-  if (mode !== 'local' || !n || status === 'connected' || status === 'connecting') return null;
+  if (mode !== 'local' || !n || status === 'connected') return null;
   return (
     <div data-testid="take-control" className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-violet-400/30 bg-violet-500/10 px-4 py-3">
       <div className="text-sm text-white/75">
-        {lostTo ? <>The lights are on <b className="text-white">{lostTo}</b>.</> : <>The lights are not connected to this device.</>}
+        {taking === 'searching' ? <span className="gp-pulse">Taking the lights… the other device lets go, then this one connects (up to 30 s).</span>
+          : taking === 'notFound' ? <span className="text-orange-200">Light not found. Is it powered? Is another app (Lotus Lantern) connected to it? Try again.</span>
+          : lostTo ? <>The lights are on <b className="text-white">{lostTo}</b>.</> : <>The lights are not connected to this device.</>}
         <span className="block text-xs text-white/45">They accept one device at a time.</span>
       </div>
-      <button onClick={() => void store.takeControl()} className="brand-gradient rounded-xl px-4 py-2 text-sm font-semibold text-white">Take control</button>
+      <button disabled={taking === 'searching'} onClick={() => void store.takeControl()} className="brand-gradient rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+        {taking === 'searching' ? 'Searching…' : 'Take control'}
+      </button>
     </div>
   );
 }

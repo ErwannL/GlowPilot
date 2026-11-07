@@ -160,6 +160,8 @@ export interface UIState {
   claimAt: number;
   /** Another GlowPilot took the lights from this one ("your PC"): shown with a "Take control" button. */
   lostTo: string | null;
+  /** "Take control" in progress, or it ended without finding the light. */
+  taking: null | 'searching' | 'notFound';
 }
 
 // --- persistence ---------------------------------------------------------------
@@ -418,6 +420,7 @@ class Store {
       owner: 'desktop',
       claimAt: 0,
       lostTo: null,
+      taking: null,
       log: [],
       lastAckAt: 0,
       error: null,
@@ -1075,13 +1078,28 @@ class Store {
   async takeControl() {
     const now = Date.now();
     lastYieldAsk = now;
-    this.set({ claimAt: now, lostTo: null, owner: desktop ? 'desktop' : this.state.owner });
+    this.set({ claimAt: now, lostTo: null, taking: 'searching', owner: desktop ? 'desktop' : this.state.owner });
     phoneLog('take control');
-    if (this.state.mode === 'remote') { this.sendRemote({ t: 'requestOwnership' }); return; }
-    await this.tellPeer({ t: 'requestOwnership' });
-    await askOthersToYield();
-    // The light needs a moment to advertise again once the other one has let go.
-    setTimeout(() => this.lights.forEach((l) => l.status !== 'connected' && this.connectLight(l.device.id)), 2500);
+    if (this.state.mode === 'remote') { this.sendRemote({ t: 'requestOwnership' }); this.set({ taking: null }); return; }
+    if (desktop) {
+      // A phone holding the light lets go within ~10 s (it watches this PC): start searching right away,
+      // the search itself lasts 20 s.
+      this.lights.forEach((l) => l.status !== 'connected' && this.connectLight(l.device.id));
+      void this.tellPeer({ t: 'requestOwnership' });
+      void askOthersToYield();
+    } else {
+      await this.tellPeer({ t: 'requestOwnership' });
+      await askOthersToYield();
+      // The light needs a moment to advertise again once the other one has let go.
+      setTimeout(() => this.lights.forEach((l) => l.status !== 'connected' && this.connectLight(l.device.id)), 2500);
+    }
+    // Still nothing after the search: say so instead of silently doing nothing.
+    setTimeout(() => {
+      if (this.state.taking !== 'searching' || this.state.claimAt !== now) return;
+      const ok = this.lights.some((l) => l.status === 'connected');
+      this.set({ taking: ok ? null : 'notFound' });
+      if (!ok) phoneLog('take control: light not found');
+    }, 35_000);
   }
 
   private heldSince = 0;
