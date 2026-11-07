@@ -8,7 +8,7 @@ import {
 } from '@glowpilot/core';
 import { WebBluetoothTransport } from './transports/webBluetooth';
 import { CapacitorBleTransport } from './transports/capacitor';
-import { askOthersToYield } from './discovery';
+import { askOthersToYield, findPeers, knownPeers } from './discovery';
 import { alarmsForPhone, phoneAlarmsAvailable, phoneLog, syncPhoneAlarms } from './phoneAlarm';
 
 /** Bridge exposed by GlowPilot Desktop's preload script. Absent in a normal browser. */
@@ -156,6 +156,10 @@ export interface UIState {
   hubNoyau: { url: string; musicSync: boolean; colors: string[]; target: string; hasToken: boolean; status: string; playing: boolean } | null;
   /** Android: next ring of the phone's alarm clock, and when the phone will run a light alarm. */
   phoneAlarm: { systemAt: number | null; systemApp?: string | null; nextAt: number | null; exact: boolean } | null;
+  /** When the user last pressed "Take control" here (other GlowPilots see it and let go). */
+  claimAt: number;
+  /** Another GlowPilot took the lights from this one ("your PC"): shown with a "Take control" button. */
+  lostTo: string | null;
 }
 
 // --- persistence ---------------------------------------------------------------
@@ -262,7 +266,9 @@ const EMPTY_SNAPSHOT: EngineSnapshot = { light: { ...DEFAULT_STATE }, activeScen
 let lastYieldAsk = 0;
 /** Direct Bluetooth and the light can't be reached: maybe the hub/PC grabbed it while the app was closed. */
 function yieldIfHeld() {
-  if (store.state.mode !== 'local' || Date.now() - lastYieldAsk < 60_000) return;
+  // Only on an explicit "Take control" now: asking automatically made the phone and the PC steal the light
+  // from each other all day.
+  if (store.state.mode !== 'local' || Date.now() - lastYieldAsk < 60_000 || Date.now() - store.state.claimAt > 60_000) return;
   lastYieldAsk = Date.now();
   void askOthersToYield().then((n) => n && phoneLog(`asked ${n} other GlowPilot(s) holding the light to let go`));
 }
@@ -410,6 +416,8 @@ class Store {
       foreground: null,
       activity: null,
       owner: 'desktop',
+      claimAt: 0,
+      lostTo: null,
       log: [],
       lastAckAt: 0,
       error: null,
@@ -436,7 +444,8 @@ class Store {
     if (sl && sl.at > Date.now()) this.lights.forEach((l) => l.engine.setSleepTimer((sl.at - Date.now()) / 60_000));
     phoneLog(`app started (${settings.mode} mode)`);
     // Started in Direct Bluetooth: make sure the hub/PC we're paired with isn't fighting for the lights.
-    if (settings.mode === 'local') { void this.tellPeer({ t: 'requestOwnership' }); lastYieldAsk = Date.now(); void askOthersToYield(); }
+    // Direct Bluetooth no longer grabs the light from the PC/hub on start: the user presses "Take control".
+    if (settings.mode === 'local') { void findPeers(); this.watchClaims(); }
     window.__glowpilotAutoconnect = () => void this.autoconnectNext();
     this.syncWakeTasks();
     this.schedulePhoneSync();
@@ -448,9 +457,7 @@ class Store {
       this.lights.forEach((l) => { if (l.status === 'connected' && !l.restored) l.restored = l.restoreLook(); });
       // Back on screen in Direct Bluetooth and the light is lost: get it back now, not after the backoff.
       if (this.state.mode === 'local' && this.lights.some((l) => l.status !== 'connected')) {
-        lastYieldAsk = 0;
-        yieldIfHeld();
-        setTimeout(() => this.lights.forEach((l) => l.status !== 'connected' && l.controller.reconnectNow()), 3000);
+        this.lights.forEach((l) => l.status !== 'connected' && l.controller.reconnectNow());
       }
     });
   }
@@ -1047,12 +1054,56 @@ class Store {
       }
       else if (msg.t === 'requestOwnership') {
         void this.disconnect();
-        this.set({ owner: client });
+        this.set({ owner: client, lostTo: client.startsWith('phone') ? 'your phone' : client });
       } else if (msg.t === 'releaseOwnership' && this.state.owner === client) {
         this.set({ owner: 'desktop' });
         this.reconnect();
       }
     });
+  }
+
+  /**
+   * "Take control": this device wants the lights. Every other GlowPilot holding them (PC, hub, phone) is
+   * asked to let go, then this one connects. Nothing is taken automatically any more.
+   */
+  async takeControl() {
+    const now = Date.now();
+    lastYieldAsk = now;
+    this.set({ claimAt: now, lostTo: null, owner: desktop ? 'desktop' : this.state.owner });
+    phoneLog('take control');
+    if (this.state.mode === 'remote') { this.sendRemote({ t: 'requestOwnership' }); return; }
+    await this.tellPeer({ t: 'requestOwnership' });
+    await askOthersToYield();
+    // The light needs a moment to advertise again once the other one has let go.
+    setTimeout(() => this.lights.forEach((l) => l.status !== 'connected' && this.connectLight(l.device.id)), 2500);
+  }
+
+  private heldSince = 0;
+  /**
+   * A phone has no server the PC could call: while it holds the light it checks the PCs/hubs it knows
+   * every 10 s, and lets go when one of them was told "Take control" after this phone connected.
+   */
+  private watchClaims() {
+    if (desktop) return;
+    setInterval(async () => {
+      const held = this.state.mode === 'local' && this.lights.some((l) => l.status === 'connected');
+      if (!held) { this.heldSince = 0; return; }
+      if (!this.heldSince) this.heldSince = Date.now();
+      for (const url of knownPeers()) {
+        try {
+          const r = await fetch(`${url.replace(/^ws/, 'http')}/api/info`, { signal: AbortSignal.timeout(2000), cache: 'no-store' });
+          const info = await r.json();
+          if (typeof info.claimAgoMs === 'number' && info.claimAgoMs < Date.now() - this.heldSince && info.claimAgoMs < 120_000) {
+            const who = info.role === 'hub' ? 'the hub' : 'your PC';
+            phoneLog(`${who} took control: letting go of the lights`);
+            this.heldSince = 0;
+            await this.disconnect();
+            this.set({ lostTo: who });
+            return;
+          }
+        } catch { /* not reachable now */ }
+      }
+    }, 10_000);
   }
 
   chooseBluetooth(id: string) {
@@ -1069,7 +1120,7 @@ class Store {
       const s = this.state;
       desktop.publishState({
         snapshot: s.snapshot, status: s.status, deviceName: s.device ? s.device.alias || s.device.name : null,
-        scenes: s.scenes, rules: s.rules, schedules: s.schedules, foreground: s.foreground, owner: s.owner,
+        scenes: s.scenes, rules: s.rules, schedules: s.schedules, foreground: s.foreground, owner: s.owner, claimAt: s.claimAt,
         lights: s.lights.map((l) => ({ id: l.id, name: l.device.alias || l.device.name, status: l.status })),
         alarmActive: this.lights.some((l) => l.snapshot.ramp?.kind === 'alarm'),
         lightNames: this.lights.map((l) => l.device.name),

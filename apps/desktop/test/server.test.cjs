@@ -114,7 +114,7 @@ test('HTTP pairing, state and messages (for Noyau)', async () => {
   api.start();
   await new Promise((r) => api.server.once('listening', r));
   const base = `http://127.0.0.1:${port}`;
-  assert.deepStrictEqual(await (await fetch(`${base}/api/info`)).json(), { app: 'GlowPilot', role: 'hub', lightsConnected: false });
+  assert.deepStrictEqual(await (await fetch(`${base}/api/info`)).json(), { app: 'GlowPilot', role: 'hub', lightsConnected: false, claimAgoMs: null });
   api.broadcastState({ lights: [{ id: 'x', name: 'x', status: 'connected' }] });
   assert.strictEqual((await (await fetch(`${base}/api/info`)).json()).lightsConnected, true);
   assert.strictEqual((await fetch(`${base}/api/message`, { method: 'OPTIONS' })).status, 204);

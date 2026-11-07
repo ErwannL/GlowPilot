@@ -108,6 +108,22 @@ public final class AlarmStore {
         return null;
     }
 
+    /**
+     * Is the Clock alarm the lights were armed for still set? Only trusts what Android shows right now
+     * (never the remembered value): if the clock app's next alarm is somewhere else, or there is none,
+     * it was switched off, deleted or already dismissed.
+     */
+    static boolean clockAlarmStillSet(Context ctx, long ring) {
+        AlarmManager.AlarmClockInfo info = ((AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE)).getNextAlarmClock();
+        if (info == null) return false;
+        long t = info.getTriggerTime();
+        PendingIntent show = info.getShowIntent();
+        String pkg = show != null ? show.getCreatorPackage() : null;
+        if (pkg != null && isClockApp(pkg) && !ctx.getPackageName().equals(pkg)) return Math.abs(t - ring) < 2 * 60_000L;
+        // Another app's alarm comes first and hides the clock one: can't tell, keep going.
+        return t < ring - 60_000L;
+    }
+
     static boolean isClockApp(String pkg) {
         String p = pkg.toLowerCase();
         return p.contains("clock") || p.contains("alarm") || p.equals("com.android.bbkclock");
@@ -159,7 +175,8 @@ public final class AlarmStore {
             } catch (Exception ignored) { }
         }
         if (cfg.optBoolean("syncPhoneAlarm", false)) {
-            long ring = nextSystemAlarm(ctx);
+            String[] clock = nextClockAlarm(ctx);
+            long ring = clock == null ? 0 : Long.parseLong(clock[0]);
             if (ring > 0) {
                 try {
                     int before = cfg.optInt("minutesBefore", 60);
@@ -167,6 +184,9 @@ public final class AlarmStore {
                     a.put("id", PHONE_ALARM_ID);
                     a.put("onceAt", ring - before * 60_000L);
                     a.put("minutes", before);
+                    // Checked again when it fires: the lights never start for an alarm that no longer exists.
+                    a.put("ring", ring);
+                    a.put("clockPkg", clock[1]);
                     a.put("color", cfg.optString("color", "#ff8a30"));
                     // The Clock app rings: GlowPilot only does the light, gently unless asked otherwise.
                     boolean flash = cfg.optBoolean("flash", false);

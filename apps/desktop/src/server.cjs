@@ -77,7 +77,7 @@ class LocalApiServer {
       if (urlPath === '/api/info') {
         const st = this.lastState;
         const lightsConnected = !!st && (st.lights?.length ? st.lights.some((l) => l.status === 'connected') : st.status === 'connected');
-        return res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }).end(JSON.stringify({ app: 'GlowPilot', role: this.opts.role || 'desktop', lightsConnected }));
+        return res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }).end(JSON.stringify({ app: 'GlowPilot', role: this.opts.role || 'desktop', lightsConnected, claimAgoMs: st && st.claimAt ? Date.now() - st.claimAt : null }));
       }
       // Pairing code, only from the machine itself (the hub has no screen: Noyau or an SSH session shows it).
       if (urlPath === '/api/pairing') {

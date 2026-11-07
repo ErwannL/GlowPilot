@@ -23,9 +23,9 @@ export function SettingsPage() {
     return () => clearInterval(h);
   }, []);
 
-  const modes: { id: Mode; title: string; desc: string; ok: boolean }[] = [
+  const modes: { id: Mode; title: string; desc: string; ok: boolean; later?: boolean }[] = [
     { id: 'local', title: 'Direct Bluetooth', desc: CapacitorBleTransport.available ? 'Native Android Bluetooth' : desktop != null ? 'This PC talks to the controller' : 'Web Bluetooth (Chrome / Edge)', ok: WebBluetoothTransport.available || CapacitorBleTransport.available },
-    { id: 'remote' as Mode, title: desktop ? 'Through GlowPilot Hub' : 'Through the Hub or my PC', desc: desktop ? 'An always-on server drives the lights; this PC sends it your games and apps' : 'The hub (always-on server) or GlowPilot Desktop drives the lights over Bluetooth', ok: true },
+    { id: 'remote' as Mode, title: desktop ? 'Through GlowPilot Hub' : 'Through the Hub or my PC', desc: (desktop ? 'An always-on server drives the lights; this PC sends it your games and apps' : 'The hub (always-on server) or GlowPilot Desktop drives the lights over Bluetooth') + '. For later: the server needs a Bluetooth adapter first.', ok: true, later: true },
     { id: 'simulator', title: 'Simulator', desc: 'Try everything without hardware', ok: true },
   ];
 
@@ -38,7 +38,7 @@ export function SettingsPage() {
         <div className="grid gap-3 md:grid-cols-3">
           {modes.map((m) => (
             <button key={m.id} disabled={!m.ok} onClick={() => store.setupMode(m.id)}
-              className={`rounded-2xl border p-4 text-left transition disabled:opacity-35 ${s.mode === m.id ? 'border-violet-400/60 bg-violet-500/10' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}>
+              className={`rounded-2xl border p-4 text-left transition disabled:opacity-35 ${s.mode === m.id ? 'border-violet-400/60 bg-violet-500/10' : 'border-white/10 bg-white/5 hover:bg-white/10'} ${m.later && s.mode !== m.id ? 'opacity-40 grayscale' : ''}`}>
               <div className="font-semibold">{m.title}</div>
               <div className="mt-1 text-xs text-white/50">{m.ok ? m.desc : 'Not available here'}</div>
             </button>

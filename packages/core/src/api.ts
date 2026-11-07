@@ -29,6 +29,8 @@ export interface RemoteState {
   snapshot: EngineSnapshot;
   status: ConnectionStatus;
   deviceName: string | null;
+  /** When "Take control" was last pressed on this GlowPilot (phones holding the light let go). */
+  claimAt?: number;
   scenes: Scene[];
   rules: AutomationRule[];
   schedules: Schedule[];

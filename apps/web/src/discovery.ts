@@ -60,7 +60,18 @@ export const subnetOf = (url: string) => /^wss?:\/\/(\d+\.\d+\.\d+)\.\d+/.exec(u
  * Ask every GlowPilot (hub, PC) that holds it to let go. Returns how many were asked.
  */
 export async function askOthersToYield(): Promise<number> {
-  const holders = (await discoverAll(['192.168.1', '192.168.0'])).filter((x) => x.lightsConnected);
+  const holders = (await findPeers()).filter((x) => x.lightsConnected);
   await Promise.all(holders.map((x) => fetch(`${x.url.replace(/^ws/, 'http')}/api/yield`, { method: 'POST', signal: AbortSignal.timeout(3000) }).catch(() => {})));
   return holders.length;
+}
+
+/** GlowPilots (PC, hub) seen on the home network, remembered so a phone can watch for "Take control". */
+export async function findPeers(): Promise<Instance[]> {
+  const list = await discoverAll(['192.168.1', '192.168.0']);
+  if (list.length) try { localStorage.setItem('gp.peers', JSON.stringify(list.map((x) => x.url))); } catch { /* ignore */ }
+  return list;
+}
+
+export function knownPeers(): string[] {
+  try { return JSON.parse(localStorage.getItem('gp.peers') ?? '[]'); } catch { return []; }
 }

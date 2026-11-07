@@ -131,6 +131,13 @@ public class AlarmService extends Service {
         long total = minutes * 60_000L;
         long start = System.currentTimeMillis();
         boolean phoneSync = AlarmStore.PHONE_ALARM_ID.equals(alarm.optString("id"));
+        long ring = alarm.optLong("ring", 0);
+        if (phoneSync && (ring <= 0 || !AlarmStore.clockAlarmStillSet(this, ring))) {
+            AlarmStore.log(this, "phone alarm cancelled: the Clock alarm for " + fmt(ring) + " is not set any more");
+            return;
+        }
+        if (phoneSync) AlarmStore.log(this, "following Clock alarm " + fmt(ring) + " from " + alarm.optString("clockPkg"));
+        long lastCheck = System.currentTimeMillis();
         // Who drives the lights? Ask the PC first.
         String pc = pcStatus(cfg);
         if ("connected".equals(pc) && !"running".equals(pc)) {
@@ -149,6 +156,17 @@ public class AlarmService extends Service {
         while (!stopped && System.currentTimeMillis() < safetyEnd) {
             long now = System.currentTimeMillis();
             long el = now - start;
+            // Clock alarm switched off during the build-up: stop and put the light back off.
+            if (phoneSync && !rang && now - lastCheck > 60_000) {
+                lastCheck = now;
+                if (!AlarmStore.clockAlarmStillSet(this, ring)) {
+                    AlarmStore.log(this, "Clock alarm removed during the build-up: lights off");
+                    if (pcDrivesLights) pcStopAlarm(cfg);
+                    else if (writeChar != null) { write(frame(0x04, 0, 0, 0, 0xff, 0x00)); sleep(300); }
+                    closeGatt();
+                    return;
+                }
+            }
             // Ring when the build-up ends (the Clock app rings by itself for the synced phone alarm).
             if (!rang && el >= total) {
                 rang = true;
@@ -173,6 +191,10 @@ public class AlarmService extends Service {
             if (lastHex == null) { writeChar = null; closeGatt(); lastHex = ""; }
             sleep(120);
         }
+    }
+
+    private static String fmt(long ms) {
+        return ms <= 0 ? "?" : new java.text.SimpleDateFormat("EEE dd/MM HH:mm", java.util.Locale.FRANCE).format(new java.util.Date(ms));
     }
 
     /** Level/on for now: same as alarmAt() in packages/core/src/effects.ts, plus the music rhythm. */
