@@ -1,8 +1,9 @@
+import { useState } from 'react';
 import { colorName, effectColorAt, rgbToHex, SOFTWARE_EFFECTS, elkDriver } from '@glowpilot/core';
 import { useNow } from '../hooks';
 import { store, useStore } from '../store';
 import { navigate } from '../App';
-import { Badge, Button, Card, Slider, StatusPill, Toggle } from '../components/ui';
+import { Badge, Button, Card, Modal, Slider, StatusPill, Toggle } from '../components/ui';
 import { FindDesktopCard } from '../components/FindDesktop';
 
 export function Dashboard() {
@@ -19,7 +20,9 @@ export function Dashboard() {
   const mode = light.controllerEffect != null
     ? elkDriver.effects.find((e) => e.id === light.controllerEffect)?.name ?? 'Controller effect'
     : softwareEffect ? SOFTWARE_EFFECTS.find((e) => e.type === softwareEffect.type)?.name : 'Static colour';
-  const quick = ['work', 'relax', 'cinema', 'gaming', 'night', 'halloween'].map((id) => s.scenes.find((x) => x.id === id)!).filter(Boolean);
+  const [editQuick, setEditQuick] = useState(false);
+  const quickIds = s.settings.quickScenes ?? DEFAULT_QUICK;
+  const quick = quickIds.map((id) => s.scenes.find((x) => x.id === id)!).filter(Boolean);
 
   return (
     <div className="space-y-5">
@@ -112,7 +115,11 @@ export function Dashboard() {
         </div>
       </div>
 
-      <Card title="Quick scenes" action={<button className="text-sm text-violet-300" onClick={() => navigate('scenes')}>All scenes →</button>}>
+      <Card title="Quick scenes" action={<div className="flex gap-3">
+        <button className="text-sm text-violet-300" onClick={() => setEditQuick(true)}>Edit</button>
+        <button className="text-sm text-violet-300" onClick={() => navigate('scenes')}>All scenes →</button>
+      </div>}>
+        {quick.length === 0 && <p className="text-sm text-white/50">No quick scene on this device. Tap Edit to pick some.</p>}
         <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
           {quick.map((q) => (
             <button key={q.id} onClick={() => store.exec({ type: 'scene', sceneId: q.id })}
@@ -123,6 +130,27 @@ export function Dashboard() {
           ))}
         </div>
       </Card>
+
+      <Modal open={editQuick} onClose={() => setEditQuick(false)} title="Quick scenes on this device">
+        <p className="mb-3 text-sm text-white/55">Tap to add or remove. They show in the order you pick them. Only this {desktopLabel()} changes: your other devices keep their own.</p>
+        <div className="grid grid-cols-2 gap-2">
+          {s.scenes.map((sc) => {
+            const i = quickIds.indexOf(sc.id);
+            return (
+              <button key={sc.id} data-testid={`quick-${sc.id}`} onClick={() => store.updateSettings({ quickScenes: i >= 0 ? quickIds.filter((x) => x !== sc.id) : [...quickIds, sc.id] })}
+                className={`flex items-center gap-2 rounded-2xl border px-3 py-2 text-left text-sm ${i >= 0 ? 'border-violet-400/60 bg-violet-500/15' : 'border-white/10 bg-white/5'}`}>
+                <span className="text-lg">{sc.icon}</span>
+                <span className="min-w-0 flex-1 truncate">{sc.name}</span>
+                {i >= 0 && <span className="text-xs text-violet-200">{i + 1}</span>}
+              </button>
+            );
+          })}
+        </div>
+        <div className="mt-4 flex flex-wrap justify-between gap-2">
+          <Button onClick={() => store.updateSettings({ quickScenes: undefined })}>Reset</Button>
+          <Button variant="primary" onClick={() => setEditQuick(false)}>Done</Button>
+        </div>
+      </Modal>
 
       <Card title="Quick actions">
         <div className="flex flex-wrap gap-2">
@@ -150,3 +178,6 @@ export function stepLabel(snap: { mixStepSceneId: string | null; softwareEffect:
   if (id.startsWith('step:')) return SOFTWARE_EFFECTS.find((e) => e.type === snap.softwareEffect?.type)?.name ?? `Step ${+id.slice(5) + 1}`;
   return scenes.find((x) => x.id === id)?.name ?? '';
 }
+
+const DEFAULT_QUICK = ['work', 'relax', 'cinema', 'gaming', 'night', 'halloween'];
+const desktopLabel = () => ((window as unknown as { glowpilotDesktop?: unknown }).glowpilotDesktop ? 'PC' : 'device');

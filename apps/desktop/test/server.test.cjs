@@ -196,3 +196,22 @@ test('Bluetooth radio state is read from PowerShell output', () => {
   assert.equal(parseState(''), 'unknown');
   assert.equal(parseState('warning line\nOff\n'), 'off');
 });
+
+test('a second GlowPilot on the same port does not crash the app (real-life EADDRINUSE popup)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gp-'));
+  const port = 48300 + Math.floor(Math.random() * 50);
+  const first = new LocalApiServer({ port, staticDir: dir, storeFile: path.join(dir, 'a.json'), onMessage: () => {} });
+  first.start();
+  await new Promise((r) => first.server.once('listening', r));
+  const uncaught = [];
+  const onUncaught = (e) => uncaught.push(e);
+  // node:test turns an uncaught exception into a failure; listen for it explicitly to report it clearly.
+  process.prependListener('uncaughtException', onUncaught);
+  const second = new LocalApiServer({ port, staticDir: dir, storeFile: path.join(dir, 'b.json'), onMessage: () => {} });
+  second.start();
+  await new Promise((r) => setTimeout(r, 300));
+  process.removeListener('uncaughtException', onUncaught);
+  assert.deepStrictEqual(uncaught.map((e) => e.message), []);
+  assert.match(second.error, /EADDRINUSE/);
+  first.server.close();
+});

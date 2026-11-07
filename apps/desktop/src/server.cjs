@@ -105,6 +105,9 @@ class LocalApiServer {
     });
 
     const wss = new WebSocketServer({ server, maxPayload: 512 * 1024 });
+    // ws re-emits the HTTP server's errors (port already in use…): without a listener that became an
+    // uncaught exception and Windows showed a crash dialog. The 'error' handler below explains it.
+    wss.on('error', () => {});
     wss.on('connection', (ws, req) => {
       const ip = req.socket.remoteAddress;
       if (!isPrivateAddress(ip)) { ws.terminate(); return; }

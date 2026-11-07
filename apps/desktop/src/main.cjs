@@ -29,8 +29,18 @@ function readJson(f) {
   try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; }
 }
 
-// Single instance: a second launch focuses the existing window.
-if (!app.requestSingleInstanceLock()) app.quit();
+// Single instance: a second launch focuses the existing window. It must stop right here: it used to go on,
+// start its own local API on the port the first one holds, and crash with an EADDRINUSE dialog.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  return;
+}
+// Never show Electron's "A JavaScript error occurred in the main process" dialog: log and keep running.
+process.on('uncaughtException', (e) => {
+  console.error('GlowPilot main process error', e);
+  try { fs.appendFileSync(path.join(app.getPath('userData'), 'main-errors.log'), `${new Date().toISOString()} ${e && e.stack ? e.stack : e}
+`); } catch { /* ignore */ }
+});
 app.on('second-instance', () => { win?.show(); win?.focus(); });
 
 app.commandLine.appendSwitch('enable-experimental-web-platform-features'); // Web Bluetooth getDevices()

@@ -112,6 +112,8 @@ export interface Settings {
   noyauToken: string;
   /** Noyau account the token belongs to (shown as "Signed in as"). */
   noyauUser?: string;
+  /** Scenes shown in "Quick scenes" on Home, in order. Kept on this device only: phone and PC can differ. */
+  quickScenes?: string[];
   automationEnabled: boolean;
   onboarded: boolean;
 }
