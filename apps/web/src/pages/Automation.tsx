@@ -6,11 +6,15 @@ import { Badge, Button, Card, Field, inputCls, Modal, PageHeader, Toggle } from 
 export function Automation() {
   const s = useStore((x) => x);
   const [edit, setEdit] = useState<AutomationRule | null>(null);
-  const [steam, setSteam] = useState<{ appid: string; name: string; exes: string[]; pick: boolean; sceneId: string }[] | null>(null);
+  // One row per Steam game. `ruleId`: the rule that already covers it (then the row edits that rule
+  // instead of adding a duplicate). `pick`: new game → add a rule; existing → keep the rule enabled.
+  const [steam, setSteam] = useState<{ appid: string; name: string; exes: string[]; pick: boolean; sceneId: string; ruleId: string | null }[] | null>(null);
   const openSteam = async () => {
     const games = (await desktop?.steamGames?.()) ?? [];
-    const has = (g: { name: string; exes: string[] }) => s.rules.some((r) => r.name.toLowerCase() === g.name.toLowerCase() || g.exes.some((e) => r.process.toLowerCase().split('|').map((x) => x.trim()).includes(e.toLowerCase())));
-    setSteam(games.map((g) => ({ ...g, pick: !has(g), sceneId: 'gaming' })));
+    setSteam(games.map((g) => {
+      const r = ruleForGame(s.rules, g);
+      return { ...g, pick: r ? r.enabled : true, sceneId: r?.sceneId ?? 'gaming', ruleId: r?.id ?? null };
+    }));
   };
   const conflicts = findConflicts(s.rules);
   const canDetect = !!desktop || s.mode === 'remote';
@@ -76,12 +80,12 @@ export function Automation() {
         <Modal open onClose={() => setSteam(null)} title="Your Steam games">
           {steam.length === 0 ? <p className="text-sm text-white/55">No installed Steam game found.</p> : (
             <div className="space-y-2">
-              <p className="text-sm text-white/55">Found in your Steam library. Each checked game gets a rule: <i>while it runs, play this scene</i>. Games that already have a rule are unchecked.</p>
+              <p className="text-sm text-white/55">Found in your Steam library. Checked games get a rule: <i>while it runs, play this scene</i>. Games that already have a rule show it here: change the scene or uncheck to edit that rule (no duplicate is created).</p>
               {steam.map((g, i) => (
                 <div key={g.appid} className="flex flex-wrap items-center gap-3 rounded-xl bg-white/5 px-3 py-2">
                   <input type="checkbox" checked={g.pick} onChange={(e) => setSteam(steam.map((x, j) => (j === i ? { ...x, pick: e.target.checked } : x)))} />
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium">{g.name}</div>
+                    <div className="flex flex-wrap items-center gap-2 text-sm font-medium">{g.name}{g.ruleId && <Badge tone="blue">Has a rule</Badge>}</div>
                     <div className="truncate font-mono text-[11px] text-white/40">{g.exes.join(' | ')}</div>
                   </div>
                   <select className={inputCls.replace('w-full', 'w-40') + ' py-1.5'} value={g.sceneId} onChange={(e) => setSteam(steam.map((x, j) => (j === i ? { ...x, sceneId: e.target.value } : x)))}>
@@ -90,11 +94,25 @@ export function Automation() {
                 </div>
               ))}
               <div className="flex justify-end pt-2">
-                <Button variant="primary" disabled={!steam.some((g) => g.pick)} onClick={() => {
-                  const added = steam.filter((g) => g.pick).map((g): AutomationRule => ({ id: newId('rule'), name: g.name, enabled: true, process: g.exes.join('|'), trigger: 'running', sceneId: g.sceneId, priority: 80, cooldownSec: 10, restorePrevious: true }));
-                  store.saveRules([...s.rules, ...added]);
-                  setSteam(null);
-                }}>Add {steam.filter((g) => g.pick).length} rule(s)</Button>
+                {(() => {
+                  const adds = steam.filter((g) => g.pick && !g.ruleId);
+                  const edits = steam.filter((g) => {
+                    const r = g.ruleId && s.rules.find((x) => x.id === g.ruleId);
+                    return r && (r.sceneId !== g.sceneId || r.enabled !== g.pick);
+                  });
+                  const label = [adds.length && `Add ${adds.length} rule${adds.length > 1 ? 's' : ''}`, edits.length && `update ${edits.length}`].filter(Boolean).join(', ') || 'Nothing to change';
+                  return (
+                    <Button variant="primary" disabled={!adds.length && !edits.length} onClick={() => {
+                      const updated = s.rules.map((r) => {
+                        const g = edits.find((x) => x.ruleId === r.id);
+                        return g ? { ...r, sceneId: g.sceneId, enabled: g.pick } : r;
+                      });
+                      const added = adds.map((g): AutomationRule => ({ id: newId('rule'), name: g.name, enabled: true, process: g.exes.join('|'), trigger: 'running', sceneId: g.sceneId, priority: 80, cooldownSec: 10, restorePrevious: true }));
+                      store.saveRules([...updated, ...added]);
+                      setSteam(null);
+                    }}>{label.charAt(0).toUpperCase() + label.slice(1)}</Button>
+                  );
+                })()}
               </div>
             </div>
           )}
@@ -152,3 +170,10 @@ export function Automation() {
 }
 
 const SYSTEM_PROCESS = /^(svchost|system|registry|smss|csrss|wininit|winlogon|services|lsass|lsaiso|dwm|conhost|runtimebroker|backgroundtaskhost|searchhost|searchindexer|sihost|taskhostw|fontdrvhost|ctfmon|dllhost|wmiprvse|audiodg|spoolsv|memory compression|idle|smartscreen|securityhealthservice|textinputhost|startmenuexperiencehost|shellexperiencehost|applicationframehost|wudfhost|msmpeng|nissrv|powershell|bash|node|cmd|openconsole|windowsterminal|explorer|aggregatorhost|amdfendrsr|atiesrxx|atieclxx|widgets|widgetservice|phoneexperiencehost|crashpad_handler|msedgewebview2)\.exe$/i;
+
+/** The rule that already covers a Steam game: same name, or one of its .exe matches the rule's process (wildcards too). */
+export function ruleForGame(rules: AutomationRule[], g: { name: string; exes: string[] }): AutomationRule | null {
+  const glob = (p: string) => new RegExp(`^${p.trim().toLowerCase().replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`);
+  return rules.find((r) => r.name.trim().toLowerCase() === g.name.trim().toLowerCase()
+    || r.process.split('|').filter((p) => p.trim()).some((p) => g.exes.some((e) => glob(p).test(e.toLowerCase())))) ?? null;
+}

@@ -597,7 +597,7 @@ class Store {
     };
     light.engine.scenes = this.state.scenes;
     light.engine.on('manual', () => {
-      if (this.automation.activeRuleId) this.automation.manualOverride(this.state.settings.overrideMinutes);
+      if (this.automation.activeRuleId) this.overrideAutomation();
     });
     light.stopScheduler = light.engine.startScheduler(
       () => this.state.schedules.filter((s) => this.deviceIdsFor(s.targetGroupId).includes(light.device.id)),
@@ -892,8 +892,7 @@ class Store {
       phoneLog(at ? `sleep timer set for ${new Date(at).toLocaleTimeString()}` : 'sleep timer cancelled');
       this.schedulePhoneSync();
     }
-    if (cmd.type === 'scene' && (cmd.source ?? 'manual') === 'manual' && this.automation.activeRuleId)
-      this.automation.manualOverride(this.state.settings.overrideMinutes);
+    if (cmd.type === 'scene' && (cmd.source ?? 'manual') === 'manual' && this.automation.activeRuleId) this.overrideAutomation();
     if (this.music && (cmd.type === 'power' || cmd.type === 'scene' || cmd.type === 'brightness')) this.stopMusic(false);
     for (const l of this.targetLights(target)) l.engine.exec(cmd);
   }
@@ -932,6 +931,12 @@ class Store {
     const settings = { ...this.state.settings, ...p };
     save('settings', settings);
     this.set({ settings });
+  }
+
+  /** The user changed the lights by hand while a rule held them: pause automation; the rule re-applies after. */
+  private overrideAutomation() {
+    this.automation.manualOverride(this.state.settings.overrideMinutes);
+    this.lights.forEach((l) => { l.engine.activeRule = null; l.savedSceneId = null; });
   }
 
   clearOverride() {

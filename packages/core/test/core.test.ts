@@ -240,6 +240,18 @@ describe('automation', () => {
     e.manualOverride(5, 13_000);
     expect(e.evaluate(idle, 'x', 14_000)).toEqual({ type: 'none' });
   });
+  it('real case: game still running after a manual change → its scene comes back when the pause ends or on Resume', () => {
+    const e = new AutomationEngine(rules);
+    const game = { processes: ['fortniteclient-win64-shipping.exe'], foreground: null };
+    expect(e.evaluate(game, 'relax', 0).type).toBe('activate');
+    e.manualOverride(30, 60_000); // user picks yellow by hand
+    expect(e.evaluate(game, null, 120_000)).toEqual({ type: 'none' }); // paused
+    // 30 min later, still playing: the rule's scene must be applied again (it used to stay "active" forever).
+    expect(e.evaluate(game, null, 60_000 + 30 * 60_000 + 1)).toEqual({ type: 'activate', ruleId: 'r1', sceneId: 'gaming' });
+    e.manualOverride(30, 2_000_000);
+    e.clearOverride(); // "Resume"
+    expect(e.evaluate(game, null, 2_000_001)).toEqual({ type: 'activate', ruleId: 'r1', sceneId: 'gaming' });
+  });
   it('detects shadowed rules', () => {
     const a = { ...rules[2], id: 'a' }, b = { ...rules[2], id: 'b', sceneId: 'relax' };
     const [a2, b2] = [a, b].map((r) => ({ ...r, enabled: true }));

@@ -100,6 +100,12 @@ export class AutomationEngine {
   /** Call when the user picks a scene manually: automation backs off for `minutes`. */
   manualOverride(minutes: number, now = Date.now()): void {
     this.overrideUntil = minutes === Infinity ? Infinity : now + minutes * 60_000;
+    // The user replaced the rule's scene: the rule no longer holds the light. Otherwise, when the pause
+    // ended (or on Resume) the still-matching rule counted as "already applied" and never came back.
+    // The user's pick becomes what is restored once the app closes.
+    this.activeRuleId = null;
+    this.savedSceneId = null;
+    this.lastFired.clear();
   }
 
   clearOverride(): void {

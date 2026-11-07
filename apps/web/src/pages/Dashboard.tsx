@@ -105,7 +105,12 @@ export function Dashboard() {
             </div>
           </Card>
           <Card title="Automation">
-            {rule ? (
+            {store.automation.overrideUntil > Date.now() ? (
+              <div className="flex flex-wrap items-center gap-2 text-sm text-orange-200" data-testid="automation-paused">
+                <span>Paused by your manual change{Number.isFinite(store.automation.overrideUntil) ? ` until ${new Date(store.automation.overrideUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}</span>
+                <Button onClick={() => store.clearOverride()}>Resume</Button>
+              </div>
+            ) : rule ? (
               <div><div className="font-semibold">⚡ {rule.name}</div><div className="text-sm text-white/50">Triggered by {rule.process}</div></div>
             ) : (
               <div className="text-sm text-white/50">{s.foreground ? `Watching · focused: ${s.foreground}` : 'No rule active'}</div>
