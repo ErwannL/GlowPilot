@@ -76,7 +76,6 @@ export function App() {
         </nav>
         <div className="space-y-2 rounded-2xl bg-white/5 p-3 text-xs text-white/55">
           <StatusPill status={status} />
-          <TakeControl />
           <div>{mode === 'remote' ? 'Via GlowPilot Desktop' : mode === 'simulator' ? 'Simulator mode' : 'Direct Bluetooth'}</div>
         </div>
       </aside>
@@ -87,7 +86,6 @@ export function App() {
           <span className="font-semibold">GlowPilot</span>
         </div>
         <div className="flex items-center gap-2">
-          <TakeControl compact />
           <StatusPill status={status} />
           <details className="relative">
             <summary className="list-none cursor-pointer rounded-xl bg-white/5 px-3 py-1.5 text-sm">☰</summary>
@@ -103,6 +101,7 @@ export function App() {
 
       <main className="relative z-10 mx-auto max-w-6xl px-4 pb-28 pt-6 lg:ml-64 lg:px-10 lg:pb-12 lg:pt-10 xl:mx-auto xl:pl-[17rem]">
         <UpdateBanner />
+        <TakeControl />
         <MasterHint />
         {['home', 'color', 'effects', 'scenes'].includes(route) && <TargetPicker />}
         <Page />
@@ -134,16 +133,22 @@ export function App() {
 }
 
 /**
- * The light accepts one connection. Shown when this device doesn't have it (another phone/PC does, or it
- * can't connect): one tap asks the others to let go and connects here.
+ * The light accepts one connection. Banner at the top of every page when this device doesn't have it
+ * (another phone/PC does, or it can't connect): one tap asks the others to let go and connects here.
  */
-function TakeControl({ compact }: { compact?: boolean }) {
-  const s = { mode: useStore((x) => x.mode), status: useStore((x) => x.status), lostTo: useStore((x) => x.lostTo), n: useStore((x) => x.lights.length) };
-  if (s.mode !== 'local' || !s.n || (s.status === 'connected' && !s.lostTo)) return null;
+export function TakeControl() {
+  const mode = useStore((x) => x.mode);
+  const status = useStore((x) => x.status);
+  const lostTo = useStore((x) => x.lostTo);
+  const n = useStore((x) => x.lights.length);
+  if (mode !== 'local' || !n || status === 'connected' || status === 'connecting') return null;
   return (
-    <button onClick={() => void store.takeControl()} title={s.lostTo ? `The lights are on ${s.lostTo}` : 'Ask the other GlowPilot to let go of the lights'}
-      className="rounded-xl bg-violet-500/20 px-3 py-1.5 text-sm font-medium text-violet-200 hover:bg-violet-500/30">
-      {compact ? 'Take control' : s.lostTo ? `On ${s.lostTo} · Take control` : 'Take control'}
-    </button>
+    <div data-testid="take-control" className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-violet-400/30 bg-violet-500/10 px-4 py-3">
+      <div className="text-sm text-white/75">
+        {lostTo ? <>The lights are on <b className="text-white">{lostTo}</b>.</> : <>The lights are not connected to this device.</>}
+        <span className="block text-xs text-white/45">They accept one device at a time.</span>
+      </div>
+      <button onClick={() => void store.takeControl()} className="brand-gradient rounded-xl px-4 py-2 text-sm font-semibold text-white">Take control</button>
+    </div>
   );
 }

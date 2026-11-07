@@ -44,7 +44,7 @@ export class WebBluetoothTransport implements BleTransport {
       const known = (await navigator.bluetooth?.getDevices?.()) ?? [];
       const d = known.find((k) => k.id === deviceId);
       // Message checked by the store (/select the controller again/), which then opens the picker on Reconnect.
-      if (!d) throw new Error('Tap Reconnect and select the controller again in the list.');
+      if (!d) throw new Error('Click Connect and select the controller again in the list.');
       this.attach(d);
     }
     const gatt = await this.device!.gatt!.connect();

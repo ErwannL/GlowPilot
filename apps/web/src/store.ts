@@ -723,7 +723,13 @@ class Store {
       // Browser permission expired: the chooser is needed (this call comes from a click).
       if (/select the controller again/i.test(e.message)) {
         void light.controller.disconnect();
-        void this.addLight();
+        // PC: the controller was picked before, find it again on its own (no list to click).
+        // It is invisible while another device (your phone) holds it: "Take control" asks that one to let go.
+        if (desktop && light.device.chooserId) {
+          light.error = 'Looking for the light… if your phone has it, press Take control.';
+          this.refresh();
+          desktop.requestAutoconnect?.();
+        } else void this.addLight();
       }
     });
   }
@@ -1079,6 +1085,7 @@ class Store {
   }
 
   private heldSince = 0;
+  private lostAt = 0;
   /**
    * A phone has no server the PC could call: while it holds the light it checks the PCs/hubs it knows
    * every 10 s, and lets go when one of them was told "Take control" after this phone connected.
@@ -1087,7 +1094,20 @@ class Store {
     if (desktop) return;
     setInterval(async () => {
       const held = this.state.mode === 'local' && this.lights.some((l) => l.status === 'connected');
-      if (!held) { this.heldSince = 0; return; }
+      if (!held) {
+        this.heldSince = 0;
+        // Let go for the PC but it never got the lights (out of range, asleep): take them back after a minute.
+        if (this.state.lostTo && this.lostAt && Date.now() - this.lostAt > 60_000) {
+          const holders = await Promise.all(knownPeers().map((u) => fetch(`${u.replace(/^ws/, 'http')}/api/info`, { signal: AbortSignal.timeout(2000) }).then((r) => r.json()).catch(() => null)));
+          if (!holders.some((h) => h?.lightsConnected)) {
+            phoneLog(`${this.state.lostTo} did not get the lights: reconnecting here`);
+            this.lostAt = 0;
+            this.set({ lostTo: null });
+            this.reconnect();
+          }
+        }
+        return;
+      }
       if (!this.heldSince) this.heldSince = Date.now();
       for (const url of knownPeers()) {
         try {
@@ -1098,6 +1118,7 @@ class Store {
             phoneLog(`${who} took control: letting go of the lights`);
             this.heldSince = 0;
             await this.disconnect();
+            this.lostAt = Date.now();
             this.set({ lostTo: who });
             return;
           }
