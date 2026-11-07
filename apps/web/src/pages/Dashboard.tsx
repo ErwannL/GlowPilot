@@ -5,6 +5,7 @@ import { store, useStore } from '../store';
 import { navigate } from '../App';
 import { Badge, Button, Card, Modal, Slider, StatusPill, Toggle } from '../components/ui';
 import { FindDesktopCard } from '../components/FindDesktop';
+import { QuickActionsCard } from '../components/QuickActions';
 
 export function Dashboard() {
   const s = useStore((x) => x);
@@ -133,6 +134,22 @@ export function Dashboard() {
 
       <Modal open={editQuick} onClose={() => setEditQuick(false)} title="Quick scenes on this device">
         <p className="mb-3 text-sm text-white/55">Tap to add or remove. They show in the order you pick them. Only this {desktopLabel()} changes: your other devices keep their own.</p>
+        {quickIds.length > 1 && (
+          <div className="mb-3 space-y-1.5" data-testid="quick-scenes-order">
+            {quickIds.map((id, i) => {
+              const sc = s.scenes.find((x) => x.id === id);
+              if (!sc) return null;
+              const move = (d: number) => { const next = [...quickIds]; [next[i], next[i + d]] = [next[i + d], next[i]]; store.updateSettings({ quickScenes: next }); };
+              return (
+                <div key={id} className="flex items-center gap-2 rounded-2xl bg-white/5 px-3 py-1.5 text-sm">
+                  <span>{sc.icon}</span><span className="min-w-0 flex-1 truncate">{sc.name}</span>
+                  <button aria-label={`Move ${sc.name} up`} className="rounded-lg px-2 py-1 text-white/60 hover:bg-white/10 disabled:opacity-30" disabled={i === 0} onClick={() => move(-1)}>↑</button>
+                  <button aria-label={`Move ${sc.name} down`} className="rounded-lg px-2 py-1 text-white/60 hover:bg-white/10 disabled:opacity-30" disabled={i === quickIds.length - 1} onClick={() => move(1)}>↓</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-2">
           {s.scenes.map((sc) => {
             const i = quickIds.indexOf(sc.id);
@@ -152,16 +169,7 @@ export function Dashboard() {
         </div>
       </Modal>
 
-      <Card title="Quick actions">
-        <div className="flex flex-wrap gap-2">
-          {!s.paused && s.mode !== 'remote' && <Button onClick={() => store.pause()} title="Stop GlowPilot's animations and rules so the remote keeps control">⏸ Pause (use the remote)</Button>}
-          <Button onClick={() => store.exec({ type: 'power', on: !light.on })}>{light.on ? 'Turn off' : 'Turn on'}</Button>
-          <Button onClick={() => store.exec({ type: 'scene', sceneId: 'cinema' })}>🎬 Cinema mode</Button>
-          <Button onClick={() => store.exec({ type: 'sleepTimer', minutes: 30 })}>💤 Sleep in 30 min</Button>
-          {sleepTimerEndsAt && <Button onClick={() => store.exec({ type: 'sleepTimer', minutes: null })}>Cancel sleep timer</Button>}
-          <Button onClick={() => store.exec({ type: 'color', color: { r: 255, g: 255, b: 255 } })}>⚪ White</Button>
-        </div>
-      </Card>
+      <QuickActionsCard />
     </div>
   );
 }

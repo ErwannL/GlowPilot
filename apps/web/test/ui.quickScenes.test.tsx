@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 localStorage.clear();
@@ -18,7 +18,7 @@ describe('Quick scenes are chosen per device', () => {
 
   it('Edit removes and adds scenes, in the order picked, saved on this device only', async () => {
     render(<Dashboard />);
-    fireEvent.click(screen.getByText('Edit'));
+    fireEvent.click(within(screen.getAllByText('Quick scenes')[0].closest('section')!).getByText('Edit'));
     await act(async () => { fireEvent.click(screen.getByTestId('quick-work')); });
     await act(async () => { fireEvent.click(screen.getByTestId('quick-work')); });
     expect(store.state.settings.quickScenes).toEqual(['relax', 'cinema', 'gaming', 'night', 'halloween', 'work']);
@@ -32,8 +32,8 @@ describe('Quick scenes are chosen per device', () => {
     await act(async () => { store.updateSettings({ quickScenes: [] }); });
     render(<Dashboard />);
     expect(screen.getByText(/No quick scene on this device/)).toBeTruthy();
-    fireEvent.click(screen.getByText('Edit'));
-    await act(async () => { fireEvent.click(screen.getByText('Reset')); });
+    fireEvent.click(within(screen.getAllByText('Quick scenes')[0].closest('section')!).getByText('Edit'));
+    await act(async () => { fireEvent.click(screen.getAllByText('Reset').at(-1)!); });
     expect(store.state.settings.quickScenes).toBeUndefined();
   });
 });

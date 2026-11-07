@@ -114,6 +114,8 @@ export interface Settings {
   noyauUser?: string;
   /** Scenes shown in "Quick scenes" on Home, in order. Kept on this device only: phone and PC can differ. */
   quickScenes?: string[];
+  /** Buttons in "Quick actions" on Home (ids, see components/QuickActions.tsx), in order. This device only. */
+  quickActions?: string[];
   automationEnabled: boolean;
   onboarded: boolean;
 }
