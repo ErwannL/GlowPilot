@@ -13,9 +13,9 @@ describe('"Take control" banner', () => {
     render(<App />);
     expect(screen.getAllByText('Take control').length).toBeGreaterThan(0);
     await act(async () => { (store as unknown as { set: (p: object) => void }).set({ lostTo: 'your PC' }); });
-    expect(screen.getByText('On your PC · Take control')).toBeTruthy();
+    expect(screen.getByTestId('take-control').textContent).toContain('The lights are on your PC');
     const take = vi.spyOn(store, 'takeControl').mockResolvedValue();
-    await act(async () => { fireEvent.click(screen.getByText('On your PC · Take control')); });
+    await act(async () => { fireEvent.click(screen.getByText('Take control')); });
     expect(take).toHaveBeenCalled();
   });
 
