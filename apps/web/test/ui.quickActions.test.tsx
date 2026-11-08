@@ -62,6 +62,44 @@ describe('Quick actions, chosen per device', () => {
     expect(store.state.settings.quickActions).toBeUndefined();
   });
 
+  it('any value: sleep in 4 min, 8 % brightness, own effect with own colours and speed', async () => {
+    await act(async () => { store.updateSettings({ quickActions: [] }); store.exec({ type: 'sleepTimer', minutes: null }); });
+    render(<Dashboard />);
+    openEditor();
+    const custom = screen.getByTestId('qa-custom');
+    fireEvent.change(within(custom).getByLabelText('Sleep minutes'), { target: { value: '4' } });
+    fireEvent.change(within(custom).getByLabelText('Brightness percent'), { target: { value: '8' } });
+    fireEvent.change(within(custom).getByLabelText('Effect'), { target: { value: 'breathe' } });
+    fireEvent.change(within(custom).getByLabelText('Effect colour 1'), { target: { value: '#ff2a00' } });
+    fireEvent.change(within(custom).getByLabelText('Effect colour 2'), { target: { value: '#5b21b6' } });
+    fireEvent.change(within(custom).getByLabelText('Effect speed'), { target: { value: '20' } });
+    const adds = within(custom).getAllByText('Add');
+    for (const b of adds) await act(async () => { fireEvent.click(b); });
+    expect(saved()).toEqual(['sleep:4', 'bright:8', 'effect:breathe:#ff2a00,#5b21b6:20']);
+    fireEvent.click(screen.getByText('Done'));
+    expect(buttons()).toEqual(['💤 Sleep in 4 min', '☀ 8 %', '✺ Breathing · speed 20']);
+    const exec = vi.spyOn(store, 'exec');
+    for (const label of ['💤 Sleep in 4 min', '☀ 8 %', '✺ Breathing · speed 20']) fireEvent.click(screen.getByText(label));
+    expect(exec.mock.calls.map((c) => c[0])).toEqual([
+      { type: 'sleepTimer', minutes: 4 },
+      { type: 'brightness', level: 8 },
+      { type: 'softwareEffect', effect: { type: 'breathe', colors: [{ r: 255, g: 42, b: 0 }, { r: 91, g: 33, b: 182 }], speed: 20 } },
+    ]);
+    exec.mockRestore();
+  });
+
+  it('out-of-range values are kept sensible (0 min → 1, 250 % → 100)', async () => {
+    await act(async () => { store.updateSettings({ quickActions: [] }); });
+    render(<Dashboard />);
+    openEditor();
+    const custom = screen.getByTestId('qa-custom');
+    fireEvent.change(within(custom).getByLabelText('Sleep minutes'), { target: { value: '0' } });
+    fireEvent.change(within(custom).getByLabelText('Brightness percent'), { target: { value: '250' } });
+    const [, sleepAdd, brightAdd] = within(custom).getAllByText(/^Add/);
+    await act(async () => { fireEvent.click(sleepAdd); fireEvent.click(brightAdd); });
+    expect(saved()).toEqual(['sleep:1', 'bright:100']);
+  });
+
   it('quick scenes can be reordered too', async () => {
     await act(async () => { store.updateSettings({ quickScenes: ['work', 'relax'] }); });
     render(<Dashboard />);
