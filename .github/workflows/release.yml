@@ -18,7 +18,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
-      - run: npm ci
+      # Electron's binary comes from GitHub/CDN during install: a 504 there failed 0.1.23. Retry 3 times.
+      - name: npm ci (with retries)
+        shell: bash
+        run: for i in 1 2 3; do npm ci && exit 0; echo "npm ci failed (try $i), retrying in 20 s"; sleep 20; done; exit 1
       - run: npm run typecheck
       - run: npm test
 
@@ -37,7 +40,10 @@ jobs:
           for f in package.json apps/web/package.json apps/desktop/package.json packages/core/package.json; do
             node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$f'));p.version='$V';fs.writeFileSync('$f',JSON.stringify(p,null,2)+'\n')"
           done
-      - run: npm ci
+      # Electron's binary comes from GitHub/CDN during install: a 504 there failed 0.1.23. Retry 3 times.
+      - name: npm ci (with retries)
+        shell: bash
+        run: for i in 1 2 3; do npm ci && exit 0; echo "npm ci failed (try $i), retrying in 20 s"; sleep 20; done; exit 1
       - run: npm run build
       # electron-builder needs the desktop app's runtime deps (ws) next to it, not hoisted to the root.
       - name: Install desktop dependencies standalone
@@ -73,7 +79,10 @@ jobs:
           for f in package.json apps/web/package.json apps/desktop/package.json packages/core/package.json; do
             node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$f'));p.version='$V';fs.writeFileSync('$f',JSON.stringify(p,null,2)+'\n')"
           done
-      - run: npm ci
+      # Electron's binary comes from GitHub/CDN during install: a 504 there failed 0.1.23. Retry 3 times.
+      - name: npm ci (with retries)
+        shell: bash
+        run: for i in 1 2 3; do npm ci && exit 0; echo "npm ci failed (try $i), retrying in 20 s"; sleep 20; done; exit 1
       - run: npm run build
       - name: Sync web app into Android project
         working-directory: apps/web

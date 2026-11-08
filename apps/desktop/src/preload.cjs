@@ -8,6 +8,11 @@ contextBridge.exposeInMainWorld('glowpilotDesktop', {
   setTrustedDevice: (id) => ipcRenderer.send('trusted-device', id),
   autoSelect: (id) => ipcRenderer.send('auto-select', id),
   requestAutoconnect: () => ipcRenderer.send('autoconnect-again'),
+  storage: {
+    snapshot: () => ipcRenderer.sendSync('storage-snapshot'),
+    set: (key, value) => ipcRenderer.send('storage-set', key, value),
+    replace: (entries) => ipcRenderer.send('storage-replace', entries),
+  },
   bluetoothRadio: () => ipcRenderer.invoke('bt-radio'),
   bluetoothRadioOn: () => ipcRenderer.invoke('bt-radio-on'),
   legacyTrustedId: () => ipcRenderer.invoke('legacy-trusted-id'),

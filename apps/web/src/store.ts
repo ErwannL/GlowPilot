@@ -366,7 +366,8 @@ class Light {
     if (!look || !this.controller.state.on || look.ramp === 'alarm') return true;
     // In the background (phone screen off, app reconnecting on its own) the light may have been switched
     // off meanwhile (sleep timer, another device): never switch it back on unseen.
-    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') { phoneLog(`${this.name}: reconnected in the background, look not restored`); return false; }
+    // Phone only: on the PC, GlowPilot normally runs hidden in the tray (Windows startup, after an update).
+    if (!desktop && typeof document !== 'undefined' && document.visibilityState !== 'visible') { phoneLog(`${this.name}: reconnected in the background, look not restored`); return false; }
     if (look.sceneId && this.engine.scenes.some((x) => x.id === look.sceneId)) this.engine.exec({ type: 'scene', sceneId: look.sceneId, source: 'schedule' });
     else if (look.effect) this.engine.exec({ type: 'softwareEffect', effect: look.effect });
     return true;

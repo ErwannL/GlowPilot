@@ -1,3 +1,5 @@
+// Must run before the store reads anything (it loads the PC's saved data file).
+import './desktopStorageInit';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';

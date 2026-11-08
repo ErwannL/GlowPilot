@@ -215,3 +215,20 @@ test('a second GlowPilot on the same port does not crash the app (real-life EADD
   assert.match(second.error, /EADDRINUSE/);
   first.server.close();
 });
+
+test('saved data survives a restart, written atomically (scenes/rules were lost on every restart)', () => {
+  const { StateFile } = require('../src/stateFile.cjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gp-state-'));
+  const file = path.join(dir, 'glowpilot-data.json');
+  const a = new StateFile(file);
+  assert.equal(a.snapshot(), null); // first start: the renderer migrates its localStorage
+  a.replaceAll({ 'gp.settings': '{"mode":"local"}' });
+  a.set('gp.look.x', '{"sceneId":"relax"}');
+  a.set('gp.settings', null);
+  a.flush();
+  assert.equal(fs.existsSync(file + '.tmp'), false);
+  const b = new StateFile(file);
+  assert.deepStrictEqual(b.snapshot(), { 'gp.look.x': '{"sceneId":"relax"}' });
+  fs.writeFileSync(file, '{broken');
+  assert.equal(new StateFile(file).snapshot(), null);
+});

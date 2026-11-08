@@ -11,11 +11,13 @@ const { setupAutoUpdate, consumeRelaunchHidden } = require('./updater.cjs');
 const { scanSteamGames } = require('./steam.cjs');
 const { syncWakeTasks, keepAwake } = require('./power.cjs');
 const { bluetoothRadio, bluetoothRadioOn } = require('./radio.cjs');
+const { StateFile } = require('./stateFile.cjs');
 
 const API_PORT = Number(process.env.GLOWPILOT_PORT || 47821);
 const WEB_DIST = app.isPackaged ? path.join(process.resourcesPath, 'web') : path.resolve(__dirname, '../../web/dist');
 const DATA = app.getPath('userData');
 const trustedFile = path.join(DATA, 'trusted-device.json');
+const state = new StateFile(path.join(DATA, 'glowpilot-data.json'));
 
 let win = null;
 let tray = null;
@@ -139,6 +141,10 @@ ipcMain.on('auto-select', (_e, id) => {
 });
 ipcMain.on('autoconnect-again', () => autoConnect());
 ipcMain.handle('bt-radio', () => bluetoothRadio());
+// Saved data of the web UI (see stateFile.cjs). Read synchronously once, before the UI starts.
+ipcMain.on('storage-snapshot', (e) => { e.returnValue = state.snapshot(); });
+ipcMain.on('storage-set', (_e, key, value) => state.set(key, value));
+ipcMain.on('storage-replace', (_e, entries) => state.replaceAll(entries));
 ipcMain.handle('bt-radio-on', () => bluetoothRadioOn());
 ipcMain.on('wake-tasks', (_e, wakes) => syncWakeTasks(Array.isArray(wakes) ? wakes.slice(0, 50) : [], (m) => console.log(m)));
 ipcMain.on('keep-awake', (_e, on) => keepAwake(!!on));
@@ -157,7 +163,7 @@ app.whenReady().then(() => {
   enableAutostartOnce();
   try { api.start(); } catch (e) { console.error('Local API failed to start', e); }
   watcher.start();
-  setupAutoUpdate(() => win, () => { quitting = true; });
+  setupAutoUpdate(() => win, () => { quitting = true; state.flush(); });
   // Sleep: leave the lights on a steady colour (the BLE link drops and animations would freeze on a random frame).
   // Wake: reconnect right away instead of waiting for the next retry.
   powerMonitor.on('suspend', () => win?.webContents.send('power', 'suspend'));
@@ -169,6 +175,7 @@ app.whenReady().then(() => {
 let quitPrepared = false;
 app.on('before-quit', (e) => {
   quitting = true;
+  state.flush();
   if (!quitPrepared && win && !win.isDestroyed()) {
     e.preventDefault();
     quitPrepared = true;
@@ -178,6 +185,7 @@ app.on('before-quit', (e) => {
     setTimeout(done, 1500);
     return;
   }
+  state.flush();
   watcher.stop();
   api.stop();
 });
