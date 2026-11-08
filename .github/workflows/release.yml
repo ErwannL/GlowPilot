@@ -28,6 +28,10 @@ jobs:
   windows:
     needs: test
     runs-on: windows-latest
+    env:
+      # npm install no longer downloads Electron (GitHub answered 504 for hours and failed 0.1.23 and 0.2.0);
+      # electron-builder fetches the zip itself, cached and retried with a mirror below.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -49,9 +53,21 @@ jobs:
       - name: Install desktop dependencies standalone
         working-directory: apps/desktop
         run: npm install --no-workspaces --no-package-lock
-      - name: Build exe
+      - name: Cache Electron download
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/electron/Cache
+          key: electron-${{ hashFiles('package-lock.json') }}
+      - name: Build exe (retries, then the npmmirror copy of Electron)
         working-directory: apps/desktop
-        run: npx electron-builder --win --publish never
+        shell: bash
+        run: |
+          for i in 1 2 3; do
+            if [ "$i" = 3 ]; then export ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"; fi
+            npx electron-builder --win --publish never && exit 0
+            echo "electron-builder failed (try $i), retrying in 30 s"; sleep 30
+          done
+          exit 1
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - uses: actions/upload-artifact@v4
